@@ -1,0 +1,14 @@
+node_modules/
+dist/
+ui/node_modules/
+ui/dist/
+data/
+models/
+*.csv
+*.pkl
+*.joblib
+*.h5
+*.parquet
+*.feather
+*.log
+.DS_Store
