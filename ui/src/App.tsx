@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type RaceListRow = {
   race_id: string;
@@ -38,11 +38,11 @@ type FinalBetPlanRow = {
   signal: string;
   confidence_label: string;
   win_prob: number;
-  win_odds: number;
+  win_odds?: number;
   win_ev: number;
-  bet_percent: number;
-  bet_grade: string;
-  action: string;
+  bet_percent?: number;
+  bet_grade?: string;
+  action?: string;
   reason: string;
 };
 
@@ -56,66 +56,29 @@ type FinalMultiBetsRow = {
 
 type BetAmountsRow = {
   race_id: string;
+  race_name?: string;
   bet_type: string;
+  axis_horse?: string;
   bet: string;
-  amount: number;
+  amount?: number;
   amount_percent?: number;
 };
 
 const ADMIN_PASSWORD = "keiba-admin";
 
-const fallbackRaceListView: RaceListRow[] = [
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", race_date: "2026-04-05", venue: "中山", race_no: 1, field_size: 15, chaos_band: "中間", pred_top_horse: "ニンジャトットリ", pred_top_signal: "軸", pred_top_confidence: "S", pred_top_ability: 58.3, distance: "1200m" },
-  { race_id: "20260405_NAKAYAMA_02", race_name: "未勝利", race_date: "2026-04-05", venue: "中山", race_no: 2, field_size: 15, chaos_band: "中間", pred_top_horse: "ミッキーサウザンド", pred_top_signal: "軸", pred_top_confidence: "S", pred_top_ability: 68.9, distance: "1800m" },
-  { race_id: "20260405_HANSHIN_11", race_name: "大阪杯G1", race_date: "2026-04-05", venue: "阪神", race_no: 11, field_size: 15, chaos_band: "中間", pred_top_horse: "クロワデュノール", pred_top_signal: "軸", pred_top_confidence: "S", pred_top_ability: 67.67, distance: "2000m" },
-  { race_id: "20260405_FUKUSHIMA_01", race_name: "未勝利", race_date: "2026-04-05", venue: "福島", race_no: 1, field_size: 14, chaos_band: "やや荒れ", pred_top_horse: "サンプルフクシマ", pred_top_signal: "軸", pred_top_confidence: "A", pred_top_ability: 55.2, distance: "1150m" },
-];
-
-const fallbackRaceDetailView: RaceDetailRow[] = [
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", win_rank: 1, gate_no: 3, horse_no: 6, horse_name: "ニンジャトットリ", jockey_name: "田辺裕信", signal: "軸", confidence_label: "S", ability_score: 58.3, win_prob: 0.182, top3_prob: 0.842 },
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", win_rank: 2, gate_no: 8, horse_no: 15, horse_name: "プラチナムディスク", jockey_name: "戸崎圭太", signal: "複勝圏", confidence_label: "A", ability_score: 57.3, win_prob: 0.161, top3_prob: 0.801 },
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", win_rank: 3, gate_no: 3, horse_no: 5, horse_name: "ツァレヴナ", jockey_name: "横山武史", signal: "能力注", confidence_label: "B", ability_score: 54.0, win_prob: 0.149, top3_prob: 0.772 },
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", win_rank: 4, gate_no: 7, horse_no: 12, horse_name: "キョウエイハル", jockey_name: "菅原明良", signal: "様子見", confidence_label: "C", ability_score: 51.2, win_prob: 0.121, top3_prob: 0.681 },
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", win_rank: 5, gate_no: 5, horse_no: 9, horse_name: "ロードトライデント", jockey_name: "横山和生", signal: "様子見", confidence_label: "C", ability_score: 51.2, win_prob: 0.118, top3_prob: 0.664 },
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", win_rank: 6, gate_no: 1, horse_no: 1, horse_name: "サンプルA", jockey_name: "石川裕紀", signal: "様子見", confidence_label: "D", ability_score: 49.8, win_prob: 0.109, top3_prob: 0.623 },
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", win_rank: 7, gate_no: 2, horse_no: 2, horse_name: "サンプルB", jockey_name: "大野拓弥", signal: "様子見", confidence_label: "D", ability_score: 48.6, win_prob: 0.098, top3_prob: 0.592 },
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", win_rank: 8, gate_no: 4, horse_no: 7, horse_name: "サンプルC", jockey_name: "三浦皇成", signal: "様子見", confidence_label: "D", ability_score: 47.4, win_prob: 0.091, top3_prob: 0.561 },
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", win_rank: 9, gate_no: 4, horse_no: 8, horse_name: "サンプルD", jockey_name: "津村明秀", signal: "様子見", confidence_label: "D", ability_score: 46.1, win_prob: 0.083, top3_prob: 0.533 },
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", win_rank: 10, gate_no: 5, horse_no: 10, horse_name: "サンプルE", jockey_name: "木幡巧也", signal: "様子見", confidence_label: "D", ability_score: 44.8, win_prob: 0.075, top3_prob: 0.497 },
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", win_rank: 11, gate_no: 6, horse_no: 11, horse_name: "サンプルF", jockey_name: "松岡正海", signal: "様子見", confidence_label: "D", ability_score: 43.4, win_prob: 0.063, top3_prob: 0.451 },
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", win_rank: 12, gate_no: 6, horse_no: 13, horse_name: "サンプルG", jockey_name: "柴田大知", signal: "様子見", confidence_label: "D", ability_score: 41.9, win_prob: 0.054, top3_prob: 0.418 },
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", win_rank: 13, gate_no: 7, horse_no: 14, horse_name: "サンプルH", jockey_name: "原優介", signal: "様子見", confidence_label: "D", ability_score: 39.7, win_prob: 0.041, top3_prob: 0.362 },
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", win_rank: 14, gate_no: 8, horse_no: 16, horse_name: "サンプルI", jockey_name: "小林勝太", signal: "様子見", confidence_label: "D", ability_score: 37.2, win_prob: 0.031, top3_prob: 0.291 },
-  { race_id: "20260405_NAKAYAMA_01", race_name: "未勝利", win_rank: 15, gate_no: 7, horse_no: 12, horse_name: "サンプルJ", jockey_name: "菅原隆一", signal: "様子見", confidence_label: "D", ability_score: 35.4, win_prob: 0.023, top3_prob: 0.214 },
-  { race_id: "20260405_NAKAYAMA_02", race_name: "未勝利", win_rank: 1, gate_no: 8, horse_no: 15, horse_name: "ミッキーサウザンド", jockey_name: "ルメール", signal: "軸", confidence_label: "S", ability_score: 68.9, win_prob: 0.243, top3_prob: 0.911 },
-  { race_id: "20260405_NAKAYAMA_02", race_name: "未勝利", win_rank: 2, gate_no: 3, horse_no: 6, horse_name: "アルデキングダム", jockey_name: "川田将雅", signal: "複勝圏", confidence_label: "A", ability_score: 54.3, win_prob: 0.151, top3_prob: 0.763 },
-  { race_id: "20260405_NAKAYAMA_02", race_name: "未勝利", win_rank: 3, gate_no: 2, horse_no: 2, horse_name: "ニシノモリミチ", jockey_name: "田辺裕信", signal: "能力注", confidence_label: "B", ability_score: 54.2, win_prob: 0.144, top3_prob: 0.741 },
-  { race_id: "20260405_NAKAYAMA_02", race_name: "未勝利", win_rank: 4, gate_no: 1, horse_no: 1, horse_name: "サクセスゴールド", jockey_name: "戸崎圭太", signal: "様子見", confidence_label: "C", ability_score: 54.2, win_prob: 0.141, top3_prob: 0.731 },
-  { race_id: "20260405_NAKAYAMA_02", race_name: "未勝利", win_rank: 5, gate_no: 6, horse_no: 11, horse_name: "ニシノトマラナイ", jockey_name: "横山武史", signal: "様子見", confidence_label: "C", ability_score: 52.7, win_prob: 0.125, top3_prob: 0.688 },
-  { race_id: "20260405_HANSHIN_11", race_name: "大阪杯G1", win_rank: 1, gate_no: 15, horse_no: 15, horse_name: "クロワデュノール", jockey_name: "北村友一", signal: "軸", confidence_label: "S", ability_score: 67.67, win_prob: 0.191, top3_prob: 0.8579 },
-  { race_id: "20260405_HANSHIN_11", race_name: "大阪杯G1", win_rank: 2, gate_no: 4, horse_no: 4, horse_name: "ダノンデサイル", jockey_name: "坂井瑠星", signal: "複勝圏", confidence_label: "A", ability_score: 57.93, win_prob: 0.1666, top3_prob: 0.7784 },
-  { race_id: "20260405_HANSHIN_11", race_name: "大阪杯G1", win_rank: 3, gate_no: 6, horse_no: 6, horse_name: "メイショウタバル", jockey_name: "武豊", signal: "能力注", confidence_label: "B", ability_score: 53.37, win_prob: 0.1589, top3_prob: 0.7221 },
-  { race_id: "20260405_HANSHIN_11", race_name: "大阪杯G1", win_rank: 4, gate_no: 5, horse_no: 5, horse_name: "ショウヘイ", jockey_name: "川田将雅", signal: "様子見", confidence_label: "C", ability_score: 51.15, win_prob: 0.1426, top3_prob: 0.6867 },
-];
-
-const fallbackFinalBetPlan: FinalBetPlanRow[] = [
-  { race_id: "20260405_HANSHIN_11", race_name: "大阪杯G1", horse_name: "メイショウタバル", horse_no: 6, signal: "能力注", confidence_label: "B", win_prob: 0.1589, win_odds: 8, win_ev: 1.2712, bet_percent: 19, bet_grade: "少額", action: "少額買い", reason: "期待値良好 / 穴寄り評価" },
-];
-
-const fallbackFinalMultiBets: FinalMultiBetsRow[] = [
-  { race_id: "20260405_HANSHIN_11", race_name: "大阪杯G1", bet_type: "ワイド", axis_horse: "6 メイショウタバル", bets: "6 メイショウタバル - 4 ダノンデサイル / 6 メイショウタバル - 15 クロワデュノール / 6 メイショウタバル - 5 ショウヘイ" },
-  { race_id: "20260405_HANSHIN_11", race_name: "大阪杯G1", bet_type: "馬連", axis_horse: "6 メイショウタバル", bets: "6 メイショウタバル - 4 ダノンデサイル / 6 メイショウタバル - 15 クロワデュノール / 6 メイショウタバル - 5 ショウヘイ" },
-  { race_id: "20260405_HANSHIN_11", race_name: "大阪杯G1", bet_type: "3連複", axis_horse: "6 メイショウタバル", bets: "6 メイショウタバル - 4 ダノンデサイル - 15 クロワデュノール / 6 メイショウタバル - 4 ダノンデサイル - 5 ショウヘイ / 6 メイショウタバル - 15 クロワデュノール - 5 ショウヘイ" },
-];
-
-const fallbackBetAmounts: BetAmountsRow[] = [
-  { race_id: "20260405_HANSHIN_11", bet_type: "ワイド", bet: "6 メイショウタバル - 15 クロワデュノール", amount: 100, amount_percent: 10 },
-  { race_id: "20260405_HANSHIN_11", bet_type: "ワイド", bet: "6 メイショウタバル - 5 ショウヘイ", amount: 100, amount_percent: 10 },
-  { race_id: "20260405_HANSHIN_11", bet_type: "馬連", bet: "6 メイショウタバル - 4 ダノンデサイル", amount: 100, amount_percent: 10 },
-];
+function toNum(v: unknown, fallback = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
 
 function pct(v: number) {
   return `${(v * 100).toFixed(1)}%`;
+}
+
+function chaosLabel(c: string) {
+  if ((c || "").includes("やや荒れ") || (c || "").includes("荒れ")) return "波乱含み";
+  if ((c || "").includes("中間")) return "実力通り";
+  return c || "実力通り";
 }
 
 function signalColor(signal: string) {
@@ -139,15 +102,11 @@ function confidenceBg(conf: string) {
   return "rgba(191,214,255,0.16)";
 }
 
-function toNum(v: unknown, fallback = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
-}
-
 function splitCsvLine(line: string) {
   const out: string[] = [];
   let cur = "";
   let inQuotes = false;
+
   for (let i = 0; i < line.length; i += 1) {
     const ch = line[i];
     const next = line[i + 1];
@@ -165,14 +124,22 @@ function splitCsvLine(line: string) {
       cur += ch;
     }
   }
+
   out.push(cur);
   return out;
 }
 
 function parseCsvText(text: string) {
-  const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").filter((x) => x.trim() !== "");
+  const lines = text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .filter((x) => x.trim() !== "");
+
   if (lines.length === 0) return [] as Record<string, string>[];
+
   const headers = splitCsvLine(lines[0]).map((h) => h.trim());
+
   return lines.slice(1).map((line) => {
     const cols = splitCsvLine(line);
     const row: Record<string, string> = {};
@@ -183,13 +150,11 @@ function parseCsvText(text: string) {
   });
 }
 
-function readCsvFile<T>(file: File, onDone: (rows: T[]) => void) {
-  const reader = new FileReader();
-  reader.onload = () => {
-    const text = typeof reader.result === "string" ? reader.result : "";
-    onDone(parseCsvText(text) as T[]);
-  };
-  reader.readAsText(file, "utf-8");
+async function loadCsv<T>(path: string): Promise<T[]> {
+  const res = await fetch(path, { cache: "no-store" });
+  if (!res.ok) throw new Error(`failed to fetch: ${path}`);
+  const text = await res.text();
+  return parseCsvText(text) as T[];
 }
 
 function StatCard({ title, value }: { title: string; value: string | number }) {
@@ -214,6 +179,15 @@ function SmallBadge({ children, bg, color }: { children: React.ReactNode; bg: st
   return <span style={{ background: bg, color, borderRadius: 999, padding: "5px 10px", fontSize: 12, fontWeight: 800 }}>{children}</span>;
 }
 
+function readCsvFile<T>(file: File, onDone: (rows: T[]) => void) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const text = typeof reader.result === "string" ? reader.result : "";
+    onDone(parseCsvText(text) as T[]);
+  };
+  reader.readAsText(file, "utf-8");
+}
+
 function RaceListCard({ race, active, onClick, detailRows }: { race: RaceListRow; active: boolean; onClick: () => void; detailRows: RaceDetailRow[] }) {
   return (
     <button onClick={onClick} style={{ width: "100%", background: "linear-gradient(180deg, rgba(27,32,64,0.98) 0%, rgba(22,27,56,0.98) 100%)", border: active ? "1px solid rgba(244,216,78,0.8)" : "1px solid rgba(255,255,255,0.08)", borderRadius: 24, overflow: "hidden", padding: 0, cursor: "pointer", textAlign: "left", boxShadow: active ? "0 10px 30px rgba(244,216,78,0.12)" : "0 8px 24px rgba(0,0,0,0.18)" }}>
@@ -229,7 +203,7 @@ function RaceListCard({ race, active, onClick, detailRows }: { race: RaceListRow
               <div style={{ fontSize: 13, color: "#9aa7cf" }}>{race.venue} / {race.distance || "-"} / {race.field_size}頭</div>
               <div style={{ marginTop: 4, fontSize: 18, fontWeight: 800, color: "#ffffff" }}>{race.venue}{race.race_no}R {race.race_name}</div>
             </div>
-            <SmallBadge bg={confidenceBg(race.pred_top_confidence)} color="#fff">{race.chaos_band}</SmallBadge>
+            <SmallBadge bg={confidenceBg(race.pred_top_confidence)} color="#fff">{chaosLabel(race.chaos_band)}</SmallBadge>
           </div>
           <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
             {detailRows.map((row) => (
@@ -248,30 +222,114 @@ function RaceListCard({ race, active, onClick, detailRows }: { race: RaceListRow
 }
 
 export default function App() {
-  const [raceListView, setRaceListView] = useState<RaceListRow[]>(fallbackRaceListView);
-  const [raceDetailView, setRaceDetailView] = useState<RaceDetailRow[]>(fallbackRaceDetailView);
-  const [finalBetPlan, setFinalBetPlan] = useState<FinalBetPlanRow[]>(fallbackFinalBetPlan);
-  const [finalMultiBets, setFinalMultiBets] = useState<FinalMultiBetsRow[]>(fallbackFinalMultiBets);
-  const [betAmounts, setBetAmounts] = useState<BetAmountsRow[]>(fallbackBetAmounts);
+  const [raceListView, setRaceListView] = useState<RaceListRow[]>([]);
+  const [raceDetailView, setRaceDetailView] = useState<RaceDetailRow[]>([]);
+  const [finalBetPlan, setFinalBetPlan] = useState<FinalBetPlanRow[]>([]);
+  const [finalMultiBets, setFinalMultiBets] = useState<FinalMultiBetsRow[]>([]);
+  const [betAmounts, setBetAmounts] = useState<BetAmountsRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [showAllHorses, setShowAllHorses] = useState(true);
-
-  const venues = Array.from(new Set(raceListView.map((r) => r.venue)));
+  const [sortMode, setSortMode] = useState<"rank" | "ability" | "win" | "top3" | "horse_no">("rank");
   const [mainTab, setMainTab] = useState<"list" | "summary" | "results">("list");
   const [detailTab, setDetailTab] = useState<"pred" | "bets">("pred");
-  const [selectedVenue, setSelectedVenue] = useState<string>(venues[0] || "");
+  const [selectedVenue, setSelectedVenue] = useState<string>("");
   const [selectedRaceId, setSelectedRaceId] = useState<string>("");
   const [adminOpen, setAdminOpen] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
 
-  const venueRaces = useMemo(() => raceListView.filter((r) => r.venue === selectedVenue).sort((a, b) => toNum(a.race_no) - toNum(b.race_no)), [raceListView, selectedVenue]);
-  const selectedRace = useMemo(() => venueRaces.find((r) => r.race_id === selectedRaceId) ?? venueRaces[0], [venueRaces, selectedRaceId]);
-  const details = useMemo(() => raceDetailView.filter((x) => x.race_id === selectedRace?.race_id).sort((a, b) => toNum(a.win_rank) - toNum(b.win_rank)), [raceDetailView, selectedRace]);
+  useEffect(() => {
+    async function init() {
+      try {
+        setLoading(true);
+        setLoadError("");
+
+        const raceListRows = await loadCsv<RaceListRow>("/data/race_list_view.csv");
+        const raceDetailRows = await loadCsv<RaceDetailRow>("/data/race_detail_view.csv");
+        const finalBetRows = await loadCsv<FinalBetPlanRow>("/data/final_bet_plan.csv");
+        const finalMultiRows = await loadCsv<FinalMultiBetsRow>("/data/final_multi_bets.csv");
+        const betAmountRows = await loadCsv<BetAmountsRow>("/data/bet_amounts.csv");
+
+        const normalizedRaceList = raceListRows.map((r: any) => ({
+          ...r,
+          race_no: toNum(r.race_no),
+          field_size: toNum(r.field_size),
+          pred_top_ability: toNum(r.pred_top_ability),
+        }));
+
+        const normalizedRaceDetail = raceDetailRows.map((r: any) => ({
+          ...r,
+          win_rank: toNum(r.win_rank),
+          gate_no: toNum(r.gate_no),
+          horse_no: toNum(r.horse_no),
+          ability_score: toNum(r.ability_score),
+          win_prob: toNum(r.win_prob),
+          top3_prob: toNum(r.top3_prob),
+        }));
+
+        const normalizedFinalBet = finalBetRows.map((r: any) => ({
+          ...r,
+          horse_no: toNum(r.horse_no),
+          win_prob: toNum(r.win_prob),
+          win_odds: toNum(r.win_odds),
+          win_ev: toNum(r.win_ev),
+          bet_percent: toNum(r.bet_percent || r.bet_ratio),
+        }));
+
+        const normalizedBetAmounts = betAmountRows.map((r: any) => ({
+          ...r,
+          amount: toNum(r.amount),
+          amount_percent: toNum(r.amount_percent || r.bet_percent),
+        }));
+
+        setRaceListView(normalizedRaceList);
+        setRaceDetailView(normalizedRaceDetail);
+        setFinalBetPlan(normalizedFinalBet);
+        setFinalMultiBets(finalMultiRows);
+        setBetAmounts(normalizedBetAmounts);
+
+        if (normalizedRaceList.length > 0) {
+          setSelectedVenue(normalizedRaceList[0].venue);
+          setSelectedRaceId(normalizedRaceList[0].race_id);
+        }
+      } catch (e) {
+        console.error(e);
+        setLoadError("CSVの読込に失敗しました。ui/public/data にCSVがあるか確認してください。");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    init();
+  }, []);
+
+  const venues = Array.from(new Set(raceListView.map((r) => r.venue)));
+
+  const venueRaces = useMemo(() => {
+    return raceListView.filter((r) => r.venue === selectedVenue).sort((a, b) => toNum(a.race_no) - toNum(b.race_no));
+  }, [raceListView, selectedVenue]);
+
+  const selectedRace = useMemo(() => {
+    return venueRaces.find((r) => r.race_id === selectedRaceId) ?? venueRaces[0];
+  }, [venueRaces, selectedRaceId]);
+
+  const details = useMemo(() => {
+    const rows = raceDetailView.filter((x) => x.race_id === selectedRace?.race_id);
+    const sorted = [...rows].sort((a, b) => {
+      if (sortMode === "ability") return toNum(b.ability_score) - toNum(a.ability_score);
+      if (sortMode === "win") return toNum(b.win_prob) - toNum(a.win_prob);
+      if (sortMode === "top3") return toNum(b.top3_prob) - toNum(a.top3_prob);
+      if (sortMode === "horse_no") return toNum(a.horse_no) - toNum(b.horse_no);
+      return toNum(a.win_rank) - toNum(b.win_rank);
+    });
+    return sorted;
+  }, [raceDetailView, selectedRace, sortMode]);
+
   const betPlan = finalBetPlan.filter((x) => x.race_id === selectedRace?.race_id);
   const multiBets = finalMultiBets.filter((x) => x.race_id === selectedRace?.race_id);
   const amounts = betAmounts.filter((x) => x.race_id === selectedRace?.race_id);
-  const avgAbility = (raceListView.reduce((sum, r) => sum + toNum(r.pred_top_ability), 0) / Math.max(raceListView.length, 1)).toFixed(1);
 
   const adminSubmit = () => {
     if (password === ADMIN_PASSWORD) {
@@ -281,6 +339,14 @@ export default function App() {
       setPasswordError("パスワードが違います");
     }
   };
+
+  if (loading) {
+    return <div style={{ minHeight: "100vh", background: "linear-gradient(180deg, #11152d 0%, #161b38 100%)", color: "#fff", padding: 24 }}>データ読込中...</div>;
+  }
+
+  if (loadError) {
+    return <div style={{ minHeight: "100vh", background: "linear-gradient(180deg, #11152d 0%, #161b38 100%)", color: "#fff", padding: 24 }}>{loadError}</div>;
+  }
 
   return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(180deg, #11152d 0%, #161b38 100%)", color: "#eef2ff", fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
@@ -301,7 +367,7 @@ export default function App() {
           <StatCard title="対象レース数" value={raceListView.length} />
           <StatCard title="期待値推奨馬" value={`${finalBetPlan.length}頭`} />
           <StatCard title="競馬場数" value={`${venues.length}場`} />
-          <StatCard title="平均AI指数" value={avgAbility} />
+          <StatCard title="平均AI指数" value={(raceListView.reduce((sum, r) => sum + toNum(r.pred_top_ability), 0) / Math.max(raceListView.length, 1)).toFixed(1)} />
         </div>
 
         <div style={{ background: "rgba(18,24,52,0.95)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: 14 }}>
@@ -322,14 +388,25 @@ export default function App() {
 
         {mainTab === "summary" && selectedRace && (
           <div style={{ display: "grid", gap: 16 }}>
-            <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               {[["pred", "評価"], ["bets", "推奨馬券"]].map(([key, label]) => (
                 <button key={key} onClick={() => setDetailTab(key as "pred" | "bets")} style={{ border: detailTab === key ? "1px solid rgba(244,216,78,0.8)" : "1px solid rgba(255,255,255,0.12)", background: detailTab === key ? "rgba(244,216,78,0.12)" : "rgba(255,255,255,0.04)", color: detailTab === key ? "#fff3a6" : "#d7ddff", borderRadius: 999, padding: "12px 18px", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>{label}</button>
               ))}
               {detailTab === "pred" && (
-                <button onClick={() => setShowAllHorses((v) => !v)} style={{ marginLeft: "auto", border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)", color: "#d7ddff", borderRadius: 999, padding: "12px 18px", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
-                  {showAllHorses ? "上位5頭だけ表示" : "全頭表示"}
-                </button>
+                <>
+                  {[
+                    ["rank", "予測順"],
+                    ["ability", "AI指数順"],
+                    ["win", "勝率順"],
+                    ["top3", "3着内率順"],
+                    ["horse_no", "馬番順"],
+                  ].map(([key, label]) => (
+                    <button key={key} onClick={() => setSortMode(key as "rank" | "ability" | "win" | "top3" | "horse_no")} style={{ border: sortMode === key ? "1px solid rgba(244,216,78,0.8)" : "1px solid rgba(255,255,255,0.12)", background: sortMode === key ? "rgba(244,216,78,0.12)" : "rgba(255,255,255,0.04)", color: sortMode === key ? "#fff3a6" : "#d7ddff", borderRadius: 999, padding: "10px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{label}</button>
+                  ))}
+                  <button onClick={() => setShowAllHorses((v) => !v)} style={{ marginLeft: "auto", border: "1px solid rgba(255,255,255,0.12)", background: "rgba(255,255,255,0.04)", color: "#d7ddff", borderRadius: 999, padding: "10px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                    {showAllHorses ? "上位5頭だけ表示" : "全頭表示"}
+                  </button>
+                </>
               )}
             </div>
 
@@ -338,7 +415,7 @@ export default function App() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
                   <div>
                     <div style={{ fontSize: 34, fontWeight: 900, color: "#ffffff" }}>{selectedRace.venue}{selectedRace.race_no}R {selectedRace.race_name}</div>
-                    <div style={{ marginTop: 6, color: "#aab4d6", fontSize: 16 }}>{selectedRace.distance || "-"} / {selectedRace.field_size}頭 / 荒れ度 : {selectedRace.chaos_band}</div>
+                    <div style={{ marginTop: 6, color: "#aab4d6", fontSize: 16 }}>{selectedRace.distance || "-"} / {selectedRace.field_size}頭 / 傾向 : {chaosLabel(selectedRace.chaos_band)}</div>
                   </div>
                   <SmallBadge bg={confidenceBg(selectedRace.pred_top_confidence)} color="#fff">信頼度 {selectedRace.pred_top_confidence}</SmallBadge>
                 </div>
@@ -350,13 +427,13 @@ export default function App() {
                       <div>
                         <div style={{ fontSize: 22, fontWeight: 900, color: "#ffffff" }}>{h.horse_name}</div>
                         <div style={{ color: "#aab4d6", marginTop: 4, fontSize: 14 }}>{h.jockey_name} / 枠{h.gate_no} / 予測{h.win_rank}位</div>
-                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                           <SmallBadge bg={confidenceBg(h.confidence_label)} color="#fff">信頼度 {h.confidence_label}</SmallBadge>
                           <SmallBadge bg="rgba(255,255,255,0.08)" color={signalColor(h.signal)}>{signalLabel(h.signal)}</SmallBadge>
                         </div>
                       </div>
                       <div style={{ display: "grid", justifyItems: "center", gap: 2 }}>
-                        <div style={{ fontSize: 40, fontWeight: 900, color: signalColor(h.signal), lineHeight: 1 }}>{h.ability_score.toFixed(1)}</div>
+                        <div style={{ fontSize: 40, fontWeight: 900, color: signalColor(h.signal), lineHeight: 1, whiteSpace: "nowrap" }}>{h.ability_score.toFixed(1)}</div>
                         <div style={{ fontSize: 12, color: "#aab4d6" }}>AI指数</div>
                       </div>
                       <div style={{ display: "grid", gap: 10 }}>
@@ -454,11 +531,11 @@ export default function App() {
                 <>
                   <div style={{ fontSize: 14, fontWeight: 700, color: "#eef2ff" }}>CSVアップロード</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 12 }}>
-                    <FileLoader label="race_list_view.csv" onFile={(file) => readCsvFile<RaceListRow>(file, (rows) => setRaceListView(rows.map((r) => ({ ...r, race_no: toNum((r as any).race_no), field_size: toNum((r as any).field_size), pred_top_ability: toNum((r as any).pred_top_ability) }))))} />
-                    <FileLoader label="race_detail_view.csv" onFile={(file) => readCsvFile<RaceDetailRow>(file, (rows) => setRaceDetailView(rows.map((r) => ({ ...r, win_rank: toNum((r as any).win_rank), gate_no: toNum((r as any).gate_no), horse_no: toNum((r as any).horse_no), ability_score: toNum((r as any).ability_score), win_prob: toNum((r as any).win_prob), top3_prob: toNum((r as any).top3_prob) }))))} />
-                    <FileLoader label="final_bet_plan.csv" onFile={(file) => readCsvFile<FinalBetPlanRow>(file, (rows) => setFinalBetPlan(rows.map((r) => ({ ...r, horse_no: toNum((r as any).horse_no), win_prob: toNum((r as any).win_prob), win_odds: toNum((r as any).win_odds), win_ev: toNum((r as any).win_ev), bet_percent: toNum((r as any).bet_percent || (r as any).bet_ratio) }))))} />
+                    <FileLoader label="race_list_view.csv" onFile={(file) => readCsvFile<RaceListRow>(file, (rows) => setRaceListView(rows.map((r: any) => ({ ...r, race_no: toNum(r.race_no), field_size: toNum(r.field_size), pred_top_ability: toNum(r.pred_top_ability) }))))} />
+                    <FileLoader label="race_detail_view.csv" onFile={(file) => readCsvFile<RaceDetailRow>(file, (rows) => setRaceDetailView(rows.map((r: any) => ({ ...r, win_rank: toNum(r.win_rank), gate_no: toNum(r.gate_no), horse_no: toNum(r.horse_no), ability_score: toNum(r.ability_score), win_prob: toNum(r.win_prob), top3_prob: toNum(r.top3_prob) }))))} />
+                    <FileLoader label="final_bet_plan.csv" onFile={(file) => readCsvFile<FinalBetPlanRow>(file, (rows) => setFinalBetPlan(rows.map((r: any) => ({ ...r, horse_no: toNum(r.horse_no), win_prob: toNum(r.win_prob), win_odds: toNum(r.win_odds), win_ev: toNum(r.win_ev), bet_percent: toNum(r.bet_percent || r.bet_ratio) }))))} />
                     <FileLoader label="final_multi_bets.csv" onFile={(file) => readCsvFile<FinalMultiBetsRow>(file, (rows) => setFinalMultiBets(rows))} />
-                    <FileLoader label="bet_amounts.csv" onFile={(file) => readCsvFile<BetAmountsRow>(file, (rows) => setBetAmounts(rows.map((r) => ({ ...r, amount: toNum((r as any).amount), amount_percent: toNum((r as any).amount_percent || (r as any).bet_percent) }))))} />
+                    <FileLoader label="bet_amounts.csv" onFile={(file) => readCsvFile<BetAmountsRow>(file, (rows) => setBetAmounts(rows.map((r: any) => ({ ...r, amount: toNum(r.amount), amount_percent: toNum(r.amount_percent || r.bet_percent) }))))} />
                   </div>
                 </>
               )}
