@@ -1,0 +1,2 @@
+race_id,race_name,horse_id,horse_name,signal,confidence_label,win_prob,win_odds,win_ev,bet_amount,bet_grade,action,reason
+20260405_HANSHIN_11,大阪杯G1,21103272.0,メイショウタバル,能力注,B,0.1589,8.0,1.2712,190.0,少額,少額買い,EV良 / signal=能力注 / grade=少額 / bet=190円

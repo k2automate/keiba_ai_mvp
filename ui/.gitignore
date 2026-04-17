@@ -17,8 +17,8 @@ dist-ssr
 !.vscode/extensions.json
 .idea
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+
+# public/data のCSVはGit管理する
+!public/
+!public/data/
+!public/data/*.csv
