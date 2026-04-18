@@ -2,6 +2,7 @@ node_modules/
 dist/
 ui/node_modules/
 ui/dist/
+
 data/
 models/
 *.csv
@@ -12,3 +13,10 @@ models/
 *.feather
 *.log
 .DS_Store
+__pycache__/
+*.pyc
+
+# 本番で使う公開CSVは管理する
+!ui/public/
+!ui/public/data/
+!ui/public/data/*.csv

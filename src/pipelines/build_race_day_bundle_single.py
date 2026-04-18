@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import sys
 import pandas as pd
 
 
@@ -85,7 +87,6 @@ def normalize_probs(df: pd.DataFrame) -> pd.DataFrame:
     df["base_score"] = (df["win_prob"] * 260 + df["top3_prob"] * 35).round(2)
 
     # AI指数は 35〜85 に収める
-    # 1位でも毎回100にはしない
     def scale_score(s: pd.Series) -> pd.Series:
         s_min = s.min()
         s_max = s.max()
@@ -129,6 +130,8 @@ def build_race_detail_view(df: pd.DataFrame) -> pd.DataFrame:
                     "ability_score": round(float(r["ability_score"]), 1),
                     "win_prob": round(float(r["win_prob"]), 4),
                     "top3_prob": round(float(r["top3_prob"]), 4),
+                    "win_odds": round(float(r["win_odds"]), 2),
+                    "win_ev": round(float(r["win_prob"]) * float(r["win_odds"]), 4),
                 }
             )
 
@@ -173,136 +176,11 @@ def build_race_list_view(detail_df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def build_final_bet_plan(detail_df: pd.DataFrame, base_df: pd.DataFrame) -> pd.DataFrame:
-    merged = detail_df.merge(
-        base_df[["race_id", "horse_no", "win_odds"]],
-        on=["race_id", "horse_no"],
-        how="left",
-    ).copy()
-
-    merged["win_ev"] = merged["win_prob"] * merged["win_odds"]
-
-    rows = []
-    for race_id, g in merged.groupby("race_id"):
-        g = g.sort_values(["win_ev", "win_prob"], ascending=[False, False]).copy()
-
-        candidates = g[g["win_ev"] >= 1.0].copy()
-        if candidates.empty:
-            candidates = g.head(1).copy()
-        else:
-            candidates = candidates.head(1).copy()
-
-        for _, r in candidates.iterrows():
-            rows.append(
-                {
-                    "race_id": r["race_id"],
-                    "race_name": r["race_name"],
-                    "horse_name": r["horse_name"],
-                    "horse_no": int(r["horse_no"]),
-                    "signal": r["signal"],
-                    "confidence_label": r["confidence_label"],
-                    "win_prob": round(float(r["win_prob"]), 4),
-                    "win_odds": round(float(r["win_odds"]), 2),
-                    "win_ev": round(float(r["win_ev"]), 4),
-                    "bet_percent": 0,
-                    "bet_grade": "標準" if float(r["win_ev"]) >= 1.1 else "少額",
-                    "action": "買い" if float(r["win_ev"]) >= 1.0 else "様子見",
-                    "reason": f"単勝期待値 {round(float(r['win_ev']), 3)} / {r['signal']}",
-                }
-            )
-
-    out = pd.DataFrame(rows)
-    out = out.sort_values(["race_id", "horse_no"])
-    return out
-
-
-def build_final_multi_bets(detail_df: pd.DataFrame, final_bet_plan_df: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-
-    for race_id, g in detail_df.groupby("race_id"):
-        g = g.sort_values("win_rank").copy()
-        plan = final_bet_plan_df[final_bet_plan_df["race_id"] == race_id].copy()
-        if plan.empty:
-            continue
-
-        axis = plan.iloc[0]
-        axis_no = int(axis["horse_no"])
-        axis_name = axis["horse_name"]
-
-        partners = g[g["horse_no"] != axis_no].head(3).copy()
-        if partners.empty:
-            continue
-
-        pair_strings = [f"{axis_no} {axis_name} - {int(r.horse_no)} {r.horse_name}" for _, r in partners.iterrows()]
-
-        trio_strings = []
-        if len(partners) >= 2:
-            partner_rows = list(partners.itertuples())
-            for i in range(len(partner_rows)):
-                for j in range(i + 1, len(partner_rows)):
-                    a = partner_rows[i]
-                    b = partner_rows[j]
-                    trio_strings.append(
-                        f"{axis_no} {axis_name} - {int(a.horse_no)} {a.horse_name} - {int(b.horse_no)} {b.horse_name}"
-                    )
-
-        rows.append(
-            {
-                "race_id": race_id,
-                "race_name": g.iloc[0]["race_name"],
-                "bet_type": "ワイド",
-                "axis_horse": f"{axis_no} {axis_name}",
-                "bets": " / ".join(pair_strings),
-            }
-        )
-        rows.append(
-            {
-                "race_id": race_id,
-                "race_name": g.iloc[0]["race_name"],
-                "bet_type": "馬連",
-                "axis_horse": f"{axis_no} {axis_name}",
-                "bets": " / ".join(pair_strings),
-            }
-        )
-        if trio_strings:
-            rows.append(
-                {
-                    "race_id": race_id,
-                    "race_name": g.iloc[0]["race_name"],
-                    "bet_type": "3連複",
-                    "axis_horse": f"{axis_no} {axis_name}",
-                    "bets": " / ".join(trio_strings),
-                }
-            )
-
-    out = pd.DataFrame(rows)
-    return out
-
-
-def build_bet_amounts(final_multi_bets_df: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-
-    for _, r in final_multi_bets_df.iterrows():
-        bets = [x.strip() for x in str(r["bets"]).split("/") if x.strip()]
-        if not bets:
-            continue
-
-        pct = 10
-
-        for bet in bets:
-            rows.append(
-                {
-                    "race_id": r["race_id"],
-                    "race_name": r["race_name"],
-                    "bet_type": r["bet_type"],
-                    "axis_horse": r["axis_horse"],
-                    "bet": bet,
-                    "amount": 100,
-                    "amount_percent": pct,
-                }
-            )
-
-    return pd.DataFrame(rows)
+def run_pipeline(module_name: str) -> None:
+    cmd = [sys.executable, "-m", module_name]
+    result = subprocess.run(cmd, cwd=ROOT)
+    if result.returncode != 0:
+        raise RuntimeError(f"{module_name} の実行に失敗しました")
 
 
 def copy_to_public():
@@ -315,8 +193,9 @@ def copy_to_public():
         FINAL_MULTI_BETS_PATH,
         BET_AMOUNTS_PATH,
     ]:
-        target = PUBLIC_DIR / path.name
-        target.write_bytes(path.read_bytes())
+        if path.exists():
+            target = PUBLIC_DIR / path.name
+            target.write_bytes(path.read_bytes())
 
 
 def main():
@@ -354,23 +233,19 @@ def main():
     base_df = normalize_probs(df)
     race_detail_view = build_race_detail_view(base_df)
     race_list_view = build_race_list_view(race_detail_view)
-    final_bet_plan = build_final_bet_plan(race_detail_view, base_df)
-    final_multi_bets = build_final_multi_bets(race_detail_view, final_bet_plan)
-    bet_amounts = build_bet_amounts(final_multi_bets)
 
     race_list_view.to_csv(RACE_LIST_PATH, index=False)
     race_detail_view.to_csv(RACE_DETAIL_PATH, index=False)
-    final_bet_plan.to_csv(FINAL_BET_PLAN_PATH, index=False)
-    final_multi_bets.to_csv(FINAL_MULTI_BETS_PATH, index=False)
-    bet_amounts.to_csv(BET_AMOUNTS_PATH, index=False)
-
-    copy_to_public()
 
     print(f"saved: {RACE_LIST_PATH}")
     print(f"saved: {RACE_DETAIL_PATH}")
-    print(f"saved: {FINAL_BET_PLAN_PATH}")
-    print(f"saved: {FINAL_MULTI_BETS_PATH}")
-    print(f"saved: {BET_AMOUNTS_PATH}")
+
+    # ここで本命・馬券ロジックを別ファイルに任せる
+    run_pipeline("src.pipelines.build_final_bet_plan")
+    run_pipeline("src.pipelines.build_final_multi_bets")
+    run_pipeline("src.pipelines.build_bet_amounts")
+
+    copy_to_public()
     print(f"copied to: {PUBLIC_DIR}")
 
 
