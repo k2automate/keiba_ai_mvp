@@ -22,3 +22,5 @@ dist-ssr
 !public/
 !public/data/
 !public/data/*.csv
+.vercel
+.env*.local

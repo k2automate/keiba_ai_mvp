@@ -19,6 +19,7 @@ type RaceDetailRow = {
   race_id: string;
   race_name: string;
   win_rank: number;
+  calculated_rank?: number; // 追加：UIで計算する予測順位
   gate_no: number;
   horse_no: number;
   horse_name: string;
@@ -88,7 +89,27 @@ function venueLabel(v: string) {
   if (v === "FUKUSHIMA") return "福島";
   if (v === "HANSHIN") return "阪神";
   if (v === "NAKAYAMA") return "中山";
+  if (v === "TOKYO") return "東京";
+  if (v === "KYOTO") return "京都";
+  if (v === "CHUKYO") return "中京";
+  if (v === "NIIGATA") return "新潟";
+  if (v === "SAPPORO") return "札幌";
+  if (v === "HAKODATE") return "函館";
+  if (v === "KOKURA") return "小倉";
   return v;
+}
+
+// === 🌟 追加：枠番カラーの判定関数 ===
+function getWakuBgColor(gateNo: number) {
+  const colors: Record<number, string> = {
+    1: "#FFFFFF", 2: "#111111", 3: "#FF3B3B", 4: "#3B3BFF",
+    5: "#FFEB3B", 6: "#4CAF50", 7: "#FF9800", 8: "#FF80AB",
+  };
+  return colors[gateNo] || "rgba(255,255,255,0.08)";
+}
+
+function getWakuTextColor(gateNo: number) {
+  return gateNo === 1 || gateNo === 5 ? "#111111" : "#FFFFFF";
 }
 
 function signalColor(signal: string) {
@@ -105,11 +126,21 @@ function signalLabel(signal: string) {
   return "△ 様子見";
 }
 
+// === 🌟 修正：信頼度S〜Cの色分けを拡張 ===
 function confidenceBg(conf: string) {
   if (conf === "S") return "rgba(244,216,78,0.18)";
   if (conf === "A") return "rgba(134,247,242,0.18)";
   if (conf === "B") return "rgba(216,180,254,0.18)";
+  if (conf === "C") return "rgba(255,140,140,0.18)";
   return "rgba(191,214,255,0.16)";
+}
+
+function confidenceText(conf: string) {
+  if (conf === "S") return "#f4d84e";
+  if (conf === "A") return "#86f7f2";
+  if (conf === "B") return "#d8b4fe";
+  if (conf === "C") return "#ff8c8c";
+  return "#fff";
 }
 
 function splitCsvLine(line: string) {
@@ -377,14 +408,22 @@ function App() {
     return venueRaces[selectedRaceIndex + 1];
   }, [venueRaces, selectedRaceIndex]);
 
+  // === 🌟 修正：予測順位(calculated_rank)をAI指数から動的に計算 ===
   const details = useMemo(() => {
     const rows = raceDetailView.filter((x) => x.race_id === selectedRace?.race_id);
-    const sorted = [...rows].sort((a, b) => {
+    
+    // まずAI指数が高い順に並べて「予測順位」を振る
+    const rankedRows = [...rows]
+      .sort((a, b) => toNum(b.ability_score) - toNum(a.ability_score))
+      .map((r, i) => ({ ...r, calculated_rank: i + 1 }));
+
+    // その後、ユーザーが選んだソートモードで並べ替える
+    const sorted = [...rankedRows].sort((a, b) => {
       if (sortMode === "ability") return toNum(b.ability_score) - toNum(a.ability_score);
       if (sortMode === "win") return toNum(b.win_prob) - toNum(a.win_prob);
       if (sortMode === "top3") return toNum(b.top3_prob) - toNum(a.top3_prob);
       if (sortMode === "horse_no") return toNum(a.horse_no) - toNum(b.horse_no);
-      return toNum(a.win_rank) - toNum(b.win_rank);
+      return toNum(a.calculated_rank) - toNum(b.calculated_rank); // rank順
     });
     return sorted;
   }, [raceDetailView, selectedRace, sortMode]);
@@ -541,7 +580,7 @@ function App() {
             {venueRaces.map((race) => {
               const listRows = raceDetailView
                 .filter((x) => x.race_id === race.race_id)
-                .sort((a, b) => toNum(a.win_rank) - toNum(b.win_rank))
+                .sort((a, b) => toNum(b.ability_score) - toNum(a.ability_score)) // AI指数順で上位を取得
                 .slice(0, 5);
 
               return (
@@ -607,7 +646,7 @@ function App() {
                         </div>
 
                         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                          <SmallBadge bg={confidenceBg(race.pred_top_confidence)} color="#fff">
+                          <SmallBadge bg={confidenceBg(race.pred_top_confidence)} color={confidenceText(race.pred_top_confidence)}>
                             信頼度 {race.pred_top_confidence}
                           </SmallBadge>
                           <SmallBadge bg="rgba(255,255,255,0.08)" color="#fff">
@@ -629,6 +668,7 @@ function App() {
                               gap: isMobile ? 8 : 12,
                             }}
                           >
+                            {/* === 🌟 枠色適用 === */}
                             <div
                               style={{
                                 width: isMobile ? 28 : 32,
@@ -637,8 +677,9 @@ function App() {
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
-                                background: row.win_rank <= 3 ? signalColor(row.signal) : "rgba(255,255,255,0.08)",
-                                color: row.win_rank <= 3 ? "#1f2340" : "#d1d8f0",
+                                background: getWakuBgColor(row.gate_no),
+                                color: getWakuTextColor(row.gate_no),
+                                border: row.gate_no === 1 ? "1px solid #ccc" : "none",
                                 fontWeight: 800,
                                 fontSize: isMobile ? 12 : 14,
                               }}
@@ -661,11 +702,13 @@ function App() {
                               </div>
                             </div>
 
+                            {/* === 🌟 80以上発光 === */}
                             <div
                               style={{
                                 fontSize: isMobile ? 14 : 16,
                                 fontWeight: 900,
-                                color: signalColor(row.signal),
+                                color: row.ability_score >= 80 ? "#FFD700" : signalColor(row.signal),
+                                textShadow: row.ability_score >= 80 ? "0 0 10px rgba(255, 215, 0, 0.5)" : "none",
                                 textAlign: "right",
                               }}
                             >
@@ -685,7 +728,7 @@ function App() {
                                   width: `${Math.min(row.ability_score, 100)}%`,
                                   height: "100%",
                                   borderRadius: 999,
-                                  background: signalColor(row.signal),
+                                  background: row.ability_score >= 80 ? "#FFD700" : signalColor(row.signal),
                                 }}
                               />
                             </div>
@@ -791,7 +834,7 @@ function App() {
                       {selectedRace.distance || "-"} / {selectedRace.field_size}頭 / 傾向 : {chaosLabel(selectedRace.chaos_band)}
                     </div>
                   </div>
-                  <SmallBadge bg={confidenceBg(selectedRace.pred_top_confidence)} color="#fff">
+                  <SmallBadge bg={confidenceBg(selectedRace.pred_top_confidence)} color={confidenceText(selectedRace.pred_top_confidence)}>
                     信頼度 {selectedRace.pred_top_confidence}
                   </SmallBadge>
                 </div>
@@ -813,13 +856,15 @@ function App() {
                         alignItems: "center",
                       }}
                     >
+                      {/* === 🌟 枠色適用 === */}
                       <div
                         style={{
                           width: isMobile ? 46 : 54,
                           height: isMobile ? 46 : 54,
                           borderRadius: 999,
-                          background: h.win_rank <= 3 ? signalColor(h.signal) : "rgba(255,255,255,0.08)",
-                          color: h.win_rank <= 3 ? "#1f2340" : "#eef2ff",
+                          background: getWakuBgColor(h.gate_no),
+                          color: getWakuTextColor(h.gate_no),
+                          border: h.gate_no === 1 ? "1px solid #ccc" : "none",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
@@ -844,14 +889,17 @@ function App() {
                           {h.horse_name}
                         </div>
 
+                        {/* === 🌟 予測順位の適用 === */}
                         <div style={{ color: "#aab4d6", marginTop: 6, fontSize: isMobile ? 12 : 14 }}>
-                          {h.jockey_name} / 枠{h.gate_no} / 予測{h.win_rank}位
+                          {h.jockey_name} / 枠{h.gate_no} / 予測{h.calculated_rank}位
                         </div>
 
                         <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                          <SmallBadge bg={confidenceBg(h.confidence_label)} color="#fff">
-                            信頼度 {h.confidence_label}
-                          </SmallBadge>
+                          {h.confidence_label && (
+                            <SmallBadge bg={confidenceBg(h.confidence_label)} color={confidenceText(h.confidence_label)}>
+                              信頼度 {h.confidence_label}
+                            </SmallBadge>
+                          )}
                           <SmallBadge bg="rgba(255,255,255,0.08)" color={signalColor(h.signal)}>
                             {signalLabel(h.signal)}
                           </SmallBadge>
@@ -859,11 +907,13 @@ function App() {
                       </div>
 
                       <div style={{ display: "grid", justifyItems: "center", gap: 2 }}>
+                        {/* === 🌟 80以上発光 === */}
                         <div
                           style={{
                             fontSize: isMobile ? 24 : 40,
                             fontWeight: 900,
-                            color: signalColor(h.signal),
+                            color: h.ability_score >= 80 ? "#FFD700" : signalColor(h.signal),
+                            textShadow: h.ability_score >= 80 ? "0 0 12px rgba(255, 215, 0, 0.5)" : "none",
                             lineHeight: 1,
                             whiteSpace: "nowrap",
                           }}
@@ -878,7 +928,7 @@ function App() {
                           label="勝率"
                           value={pct(h.win_prob)}
                           width={`${Math.min(h.win_prob * 100, 100)}%`}
-                          color={signalColor(h.signal)}
+                          color={h.ability_score >= 80 ? "#FFD700" : signalColor(h.signal)}
                           isMobile={isMobile}
                         />
                         <StatBar
@@ -944,7 +994,7 @@ function App() {
                           <SmallBadge bg="rgba(255,255,255,0.08)" color={signalColor(b.signal)}>
                             {signalLabel(b.signal)}
                           </SmallBadge>
-                          <SmallBadge bg={confidenceBg(b.confidence_label)} color="#fff">
+                          <SmallBadge bg={confidenceBg(b.confidence_label)} color={confidenceText(b.confidence_label)}>
                             信頼度 {b.confidence_label}
                           </SmallBadge>
                           <SmallBadge bg="rgba(134,247,242,0.14)" color="#86f7f2">
@@ -1077,6 +1127,9 @@ function App() {
           </div>
         )}
 
+        {/* =========================================
+            🌟 復元：一番下の管理人専用パネル（絶対消さない！）
+            ========================================= */}
         <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
           <button
             onClick={() => setAdminOpen((v) => !v)}
