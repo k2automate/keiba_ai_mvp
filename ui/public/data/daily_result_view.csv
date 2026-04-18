@@ -1,0 +1,2 @@
+race_date,total_races,pred1_win_hits,pred1_top3_hits,pred1_win_hit_rate,pred1_top3_hit_rate,win_bet_total,win_return_total,win_profit,win_roi,place_bet_total,place_return_total,place_profit,place_roi,note
+2026-04-05,24,9,19,37.5,79.17,2400,2110.0,-290.0,87.92,,,,,place_odds列がない場合、place系は空欄

@@ -66,6 +66,12 @@ def build_trio_strings(axis_row: pd.Series, partner_df: pd.DataFrame) -> list[st
     return out
 
 
+def comment_prefix(action: str) -> str:
+    if action in {"買い", "少額買い"}:
+        return ""
+    return "参考: "
+
+
 def main():
     if not DETAIL_PATH.exists():
         raise FileNotFoundError(f"{DETAIL_PATH} がありません")
@@ -102,16 +108,12 @@ def main():
     for race_id, race_df in detail_df.groupby("race_id"):
         race_df = race_df.copy()
 
-        # 本命は final_bet_plan 側に従う
-        axis_plan = plan_df[plan_df["race_id"] == race_id].copy()
-        if axis_plan.empty:
+        axis_plan_df = plan_df[plan_df["race_id"] == race_id].copy()
+        if axis_plan_df.empty:
             continue
 
-        axis_plan = axis_plan.iloc[0]
-
-        # 見送りは馬券を作らない
-        if str(axis_plan["action"]) == "様子見":
-            continue
+        axis_plan = axis_plan_df.iloc[0]
+        axis_action = str(axis_plan["action"])
 
         axis_horse_no = int(safe_num(axis_plan["horse_no"]))
         axis_row_df = race_df[race_df["horse_no"].apply(safe_num).astype(int) == axis_horse_no].copy()
@@ -123,13 +125,10 @@ def main():
 
         others = race_df[race_df["horse_no"].apply(safe_num).astype(int) != axis_horse_no].copy()
 
-        # 相手優先順位
         fukusho_df = sort_candidates(others[others["signal"] == "複勝圏"].copy())
         ability_df = sort_candidates(others[others["signal"] == "能力注"].copy())
         watch_df = sort_candidates(others[others["signal"] == "様子見"].copy())
 
-        # ワイド:
-        # 軸 × 複勝圏を基本
         wide_partners = pd.concat(
             [
                 fukusho_df.head(2),
@@ -137,8 +136,6 @@ def main():
             ]
         ).drop_duplicates(subset=["horse_no"])
 
-        # 馬連:
-        # 軸 × 複勝圏 + 能力注
         umaren_partners = pd.concat(
             [
                 fukusho_df.head(2),
@@ -146,8 +143,6 @@ def main():
             ]
         ).drop_duplicates(subset=["horse_no"])
 
-        # 3連複:
-        # 軸1頭固定 + 複勝圏/能力注優先で最大4頭から組む
         trifuku_pool = pd.concat(
             [
                 fukusho_df.head(2),
@@ -161,6 +156,7 @@ def main():
         trifuku_bets = build_trio_strings(axis_row, trifuku_pool) if len(trifuku_pool) >= 2 else []
 
         axis_text = f"{int(safe_num(axis_row['horse_no']))} {axis_row['horse_name']}"
+        prefix = comment_prefix(axis_action)
 
         if wide_bets:
             rows.append(
@@ -170,7 +166,7 @@ def main():
                     "bet_type": "ワイド",
                     "axis_horse": axis_text,
                     "bets": " / ".join(wide_bets),
-                    "comment": "軸×複勝圏を基本。足りなければ能力注を追加",
+                    "comment": f"{prefix}軸×複勝圏を基本。足りなければ能力注を追加",
                 }
             )
 
@@ -182,7 +178,7 @@ def main():
                     "bet_type": "馬連",
                     "axis_horse": axis_text,
                     "bets": " / ".join(umaren_bets),
-                    "comment": "軸×複勝圏・能力注",
+                    "comment": f"{prefix}軸×複勝圏・能力注",
                 }
             )
 
@@ -194,7 +190,7 @@ def main():
                     "bet_type": "3連複",
                     "axis_horse": axis_text,
                     "bets": " / ".join(trifuku_bets),
-                    "comment": "軸1頭固定。相手は複勝圏・能力注優先",
+                    "comment": f"{prefix}軸1頭固定。相手は複勝圏・能力注優先",
                 }
             )
 
