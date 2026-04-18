@@ -214,6 +214,56 @@ function readCsvFile<T>(file: File, onDone: (rows: T[]) => void) {
   reader.readAsText(file, "utf-8");
 }
 
+function StatBar({
+  label,
+  value,
+  width,
+  color,
+  isMobile,
+}: {
+  label: string;
+  value: string;
+  width: string;
+  color: string;
+  isMobile: boolean;
+}) {
+  return (
+    <div>
+      <div style={{ fontSize: isMobile ? 11 : 12, color: "#aab4d6", marginBottom: 4 }}>{label}</div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          fontSize: isMobile ? 13 : 14,
+          color: "#eef2ff",
+          marginBottom: 6,
+          fontWeight: 800,
+        }}
+      >
+        <span>{value}</span>
+      </div>
+      <div
+        style={{
+          height: isMobile ? 8 : 10,
+          background: "rgba(255,255,255,0.08)",
+          borderRadius: 999,
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            width,
+            height: "100%",
+            borderRadius: 999,
+            background: color,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [raceListView, setRaceListView] = useState<RaceListRow[]>([]);
   const [raceDetailView, setRaceDetailView] = useState<RaceDetailRow[]>([]);
@@ -244,11 +294,12 @@ function App() {
         setLoading(true);
         setLoadError("");
 
-        const raceListRows = await loadCsv<RaceListRow>(`/data/race_list_view.csv?t=${Date.now()}`);
-        const raceDetailRows = await loadCsv<RaceDetailRow>(`/data/race_detail_view.csv?t=${Date.now()}`);
-        const finalBetRows = await loadCsv<FinalBetPlanRow>(`/data/final_bet_plan.csv?t=${Date.now()}`);
-        const finalMultiRows = await loadCsv<FinalMultiBetsRow>(`/data/final_multi_bets.csv?t=${Date.now()}`);
-        const betAmountRows = await loadCsv<BetAmountsRow>(`/data/bet_amounts.csv?t=${Date.now()}`);
+        const ts = Date.now();
+        const raceListRows = await loadCsv<RaceListRow>(`/data/race_list_view.csv?t=${ts}`);
+        const raceDetailRows = await loadCsv<RaceDetailRow>(`/data/race_detail_view.csv?t=${ts}`);
+        const finalBetRows = await loadCsv<FinalBetPlanRow>(`/data/final_bet_plan.csv?t=${ts}`);
+        const finalMultiRows = await loadCsv<FinalMultiBetsRow>(`/data/final_multi_bets.csv?t=${ts}`);
+        const betAmountRows = await loadCsv<BetAmountsRow>(`/data/bet_amounts.csv?t=${ts}`);
 
         const normalizedRaceList = raceListRows.map((r: any) => ({
           ...r,
@@ -308,12 +359,23 @@ function App() {
   const venues = Array.from(new Set(raceListView.map((r) => r.venue)));
 
   const venueRaces = useMemo(() => {
-    return raceListView.filter((r) => r.venue === selectedVenue).sort((a, b) => toNum(a.race_no) - toNum(b.race_no));
+    return raceListView
+      .filter((r) => r.venue === selectedVenue)
+      .sort((a, b) => toNum(a.race_no) - toNum(b.race_no));
   }, [raceListView, selectedVenue]);
 
   const selectedRace = useMemo(() => {
     return venueRaces.find((r) => r.race_id === selectedRaceId) ?? venueRaces[0];
   }, [venueRaces, selectedRaceId]);
+
+  const selectedRaceIndex = useMemo(() => {
+    return venueRaces.findIndex((r) => r.race_id === selectedRace?.race_id);
+  }, [venueRaces, selectedRace]);
+
+  const nextRace = useMemo(() => {
+    if (selectedRaceIndex < 0) return undefined;
+    return venueRaces[selectedRaceIndex + 1];
+  }, [venueRaces, selectedRaceIndex]);
 
   const details = useMemo(() => {
     const rows = raceDetailView.filter((x) => x.race_id === selectedRace?.race_id);
@@ -430,7 +492,7 @@ function App() {
             padding: 14,
           }}
         >
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
             {venues.map((venue) => (
               <button
                 key={venue}
@@ -452,6 +514,25 @@ function App() {
                 {venueLabel(venue)}
               </button>
             ))}
+
+            {mainTab === "summary" && nextRace && (
+              <button
+                onClick={() => setSelectedRaceId(nextRace.race_id)}
+                style={{
+                  marginLeft: isMobile ? 0 : "auto",
+                  border: "1px solid rgba(244,216,78,0.35)",
+                  background: "rgba(244,216,78,0.10)",
+                  color: "#fff3a6",
+                  borderRadius: 14,
+                  padding: isMobile ? "10px 14px" : "12px 18px",
+                  fontWeight: 800,
+                  fontSize: isMobile ? 14 : 15,
+                  cursor: "pointer",
+                }}
+              >
+                次R ▶︎ {nextRace.race_no}R
+              </button>
+            )}
           </div>
         </div>
 
@@ -474,9 +555,10 @@ function App() {
                   style={{
                     width: "100%",
                     background: "linear-gradient(180deg, rgba(27,32,64,0.98) 0%, rgba(22,27,56,0.98) 100%)",
-                    border: race.race_id === selectedRace?.race_id
-                      ? "1px solid rgba(244,216,78,0.8)"
-                      : "1px solid rgba(255,255,255,0.08)",
+                    border:
+                      race.race_id === selectedRace?.race_id
+                        ? "1px solid rgba(244,216,78,0.8)"
+                        : "1px solid rgba(255,255,255,0.08)",
                     borderRadius: 24,
                     overflow: "hidden",
                     padding: 0,
@@ -498,7 +580,9 @@ function App() {
                         gap: 2,
                       }}
                     >
-                      <div style={{ fontSize: isMobile ? 28 : 36, fontWeight: 800, lineHeight: 1 }}>{race.race_no}</div>
+                      <div style={{ fontSize: isMobile ? 26 : 34, fontWeight: 800, lineHeight: 1 }}>
+                        {race.race_no}R
+                      </div>
                       <div style={{ fontSize: isMobile ? 12 : 13, opacity: 0.9 }}>{race.field_size}頭</div>
                     </div>
 
@@ -538,7 +622,9 @@ function App() {
                             key={`${row.race_id}-${row.horse_no}`}
                             style={{
                               display: "grid",
-                              gridTemplateColumns: isMobile ? "32px minmax(0, 1.8fr) 56px minmax(90px, 1fr)" : "40px minmax(0, 2fr) 74px minmax(140px, 1fr)",
+                              gridTemplateColumns: isMobile
+                                ? "32px minmax(0, 1.8fr) 56px minmax(90px, 1fr)"
+                                : "40px minmax(0, 2fr) 74px minmax(140px, 1fr)",
                               alignItems: "center",
                               gap: isMobile ? 8 : 12,
                             }}
@@ -720,7 +806,9 @@ function App() {
                         borderRadius: 18,
                         padding: isMobile ? 14 : 16,
                         display: "grid",
-                        gridTemplateColumns: isMobile ? "52px minmax(0, 1.8fr) 78px 1.1fr" : "70px minmax(0, 2fr) 120px 280px",
+                        gridTemplateColumns: isMobile
+                          ? "52px minmax(0, 1.7fr) 78px 1fr"
+                          : "70px minmax(0, 2fr) 120px 280px",
                         gap: isMobile ? 10 : 14,
                         alignItems: "center",
                       }}
@@ -748,16 +836,18 @@ function App() {
                             fontSize: isMobile ? 15 : 22,
                             fontWeight: 900,
                             color: "#ffffff",
-                            lineHeight: 1.25,
+                            lineHeight: 1.3,
                             wordBreak: "break-word",
                             overflowWrap: "anywhere",
                           }}
                         >
                           {h.horse_name}
                         </div>
+
                         <div style={{ color: "#aab4d6", marginTop: 6, fontSize: isMobile ? 12 : 14 }}>
                           {h.jockey_name} / 枠{h.gate_no} / 予測{h.win_rank}位
                         </div>
+
                         <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                           <SmallBadge bg={confidenceBg(h.confidence_label)} color="#fff">
                             信頼度 {h.confidence_label}
@@ -783,70 +873,21 @@ function App() {
                         <div style={{ fontSize: isMobile ? 11 : 12, color: "#aab4d6" }}>AI指数</div>
                       </div>
 
-                      <div style={{ display: "grid", gap: 10 }}>
-                        <div>
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              fontSize: isMobile ? 11 : 12,
-                              color: "#aab4d6",
-                              marginBottom: 4,
-                            }}
-                          >
-                            <span>勝率</span>
-                            <span>{pct(h.win_prob)}</span>
-                          </div>
-                          <div
-                            style={{
-                              height: isMobile ? 8 : 10,
-                              background: "rgba(255,255,255,0.08)",
-                              borderRadius: 999,
-                              overflow: "hidden",
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: `${Math.min(h.win_prob * 100, 100)}%`,
-                                height: "100%",
-                                borderRadius: 999,
-                                background: signalColor(h.signal),
-                              }}
-                            />
-                          </div>
-                        </div>
-
-                        <div>
-                          <div
-                            style={{
-                              display: "flex",
-                              justifyContent: "space-between",
-                              fontSize: isMobile ? 11 : 12,
-                              color: "#aab4d6",
-                              marginBottom: 4,
-                            }}
-                          >
-                            <span>3着内率</span>
-                            <span>{pct(h.top3_prob)}</span>
-                          </div>
-                          <div
-                            style={{
-                              height: isMobile ? 8 : 10,
-                              background: "rgba(255,255,255,0.08)",
-                              borderRadius: 999,
-                              overflow: "hidden",
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: `${Math.min(h.top3_prob * 100, 100)}%`,
-                                height: "100%",
-                                borderRadius: 999,
-                                background: "#bfd6ff",
-                              }}
-                            />
-                          </div>
-                        </div>
+                      <div style={{ display: "grid", gap: 12 }}>
+                        <StatBar
+                          label="勝率"
+                          value={pct(h.win_prob)}
+                          width={`${Math.min(h.win_prob * 100, 100)}%`}
+                          color={signalColor(h.signal)}
+                          isMobile={isMobile}
+                        />
+                        <StatBar
+                          label="3着内率"
+                          value={pct(h.top3_prob)}
+                          width={`${Math.min(h.top3_prob * 100, 100)}%`}
+                          color="#bfd6ff"
+                          isMobile={isMobile}
+                        />
                       </div>
                     </div>
                   ))}
@@ -858,7 +899,7 @@ function App() {
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(0, 1.2fr)",
+                  gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 0.9fr) minmax(0, 1.3fr)",
                   gap: 16,
                 }}
               >
@@ -896,7 +937,9 @@ function App() {
                         >
                           {b.horse_no ? `${b.horse_no} ${b.horse_name}` : b.horse_name}
                         </div>
+
                         <div style={{ color: "#aab4d6", marginTop: 4, fontSize: isMobile ? 13 : 14 }}>{b.race_name}</div>
+
                         <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                           <SmallBadge bg="rgba(255,255,255,0.08)" color={signalColor(b.signal)}>
                             {signalLabel(b.signal)}
@@ -910,12 +953,8 @@ function App() {
                         </div>
 
                         <div style={{ marginTop: 12, fontSize: isMobile ? 13 : 14, color: "#d7ddff", lineHeight: 1.8 }}>
-                          <div>
-                            勝率: <b>{pct(b.win_prob)}</b>
-                          </div>
-                          <div style={{ wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                            理由: <b>{b.reason}</b>
-                          </div>
+                          <div>勝率: <b>{pct(b.win_prob)}</b></div>
+                          <div style={{ wordBreak: "break-word", overflowWrap: "anywhere" }}>理由: <b>{b.reason}</b></div>
                         </div>
                       </div>
                     ))}
