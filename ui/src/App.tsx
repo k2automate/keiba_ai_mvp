@@ -28,6 +28,8 @@ type RaceDetailRow = {
   ability_score: number;
   win_prob: number;
   top3_prob: number;
+  win_odds?: number;
+  win_ev?: number;
 };
 
 type FinalBetPlanRow = {
@@ -52,6 +54,7 @@ type FinalMultiBetsRow = {
   bet_type: string;
   axis_horse: string;
   bets: string;
+  comment?: string;
 };
 
 type BetAmountsRow = {
@@ -165,23 +168,6 @@ async function loadCsv<T>(path: string): Promise<T[]> {
   return parseCsvText(text) as T[];
 }
 
-function StatCard({ title, value }: { title: string; value: string | number }) {
-  return (
-    <div
-      style={{
-        background: "rgba(18,24,52,0.95)",
-        border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: 18,
-        padding: 18,
-        color: "#fff",
-      }}
-    >
-      <div style={{ color: "#aab4d6", fontSize: 13 }}>{title}</div>
-      <div style={{ fontSize: 28, fontWeight: 800, marginTop: 6 }}>{value}</div>
-    </div>
-  );
-}
-
 function FileLoader({ label, onFile }: { label: string; onFile: (file: File) => void }) {
   return (
     <label style={{ display: "grid", gap: 6, fontSize: 13, color: "#aab4d6" }}>
@@ -209,6 +195,9 @@ function SmallBadge({
         padding: "5px 10px",
         fontSize: 12,
         fontWeight: 800,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
       }}
     >
       {children}
@@ -225,161 +214,29 @@ function readCsvFile<T>(file: File, onDone: (rows: T[]) => void) {
   reader.readAsText(file, "utf-8");
 }
 
-function RaceListCard({
-  race,
-  active,
-  onClick,
-  detailRows,
-}: {
-  race: RaceListRow;
-  active: boolean;
-  onClick: () => void;
-  detailRows: RaceDetailRow[];
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        width: "100%",
-        background: "linear-gradient(180deg, rgba(27,32,64,0.98) 0%, rgba(22,27,56,0.98) 100%)",
-        border: active ? "1px solid rgba(244,216,78,0.8)" : "1px solid rgba(255,255,255,0.08)",
-        borderRadius: 24,
-        overflow: "hidden",
-        padding: 0,
-        cursor: "pointer",
-        textAlign: "left",
-        boxShadow: active ? "0 10px 30px rgba(244,216,78,0.12)" : "0 8px 24px rgba(0,0,0,0.18)",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "stretch" }}>
-        <div
-          style={{
-            width: 88,
-            background: "linear-gradient(180deg, #101d67 0%, #0d1749 100%)",
-            color: "#fff",
-            padding: "18px 10px",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "center",
-            alignItems: "center",
-            gap: 2,
-          }}
-        >
-          <div style={{ fontSize: 36, fontWeight: 800, lineHeight: 1 }}>{race.race_no}</div>
-          <div style={{ fontSize: 13, opacity: 0.9 }}>{race.field_size}頭</div>
-          <div
-            style={{
-              marginTop: 8,
-              width: "100%",
-              height: 4,
-              borderRadius: 999,
-              background:
-                race.venue === "中山" || race.venue === "NAKAYAMA"
-                  ? "#57b7ff"
-                  : race.venue === "阪神" || race.venue === "HANSHIN"
-                    ? "#ffa55b"
-                    : "#98e86d",
-            }}
-          />
-        </div>
-
-        <div style={{ flex: 1, padding: 18 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-            <div>
-              <div style={{ fontSize: 13, color: "#9aa7cf" }}>
-                {venueLabel(race.venue)} / {race.distance || "-"} / {race.field_size}頭
-              </div>
-              <div style={{ marginTop: 4, fontSize: 18, fontWeight: 800, color: "#ffffff" }}>
-                {venueLabel(race.venue)}
-                {race.race_no}R {race.race_name}
-              </div>
-            </div>
-            <SmallBadge bg={confidenceBg(race.pred_top_confidence)} color="#fff">
-              {chaosLabel(race.chaos_band)}
-            </SmallBadge>
-          </div>
-
-          <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
-            {detailRows.map((row) => (
-              <div
-                key={`${row.race_id}-${row.horse_no}`}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "38px 1fr 74px minmax(120px, 260px)",
-                  alignItems: "center",
-                  gap: 10,
-                }}
-              >
-                <div
-                  style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: 999,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    background: row.win_rank <= 3 ? signalColor(row.signal) : "rgba(255,255,255,0.08)",
-                    color: row.win_rank <= 3 ? "#1f2340" : "#d1d8f0",
-                    fontWeight: 800,
-                    fontSize: 14,
-                  }}
-                >
-                  {row.horse_no}
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontSize: 16,
-                      fontWeight: 800,
-                      color: "#eef2ff",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {row.horse_name}
-                  </div>
-                </div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: signalColor(row.signal), textAlign: "right" }}>
-                  {row.ability_score.toFixed(1)}
-                </div>
-                <div style={{ height: 14, background: "rgba(255,255,255,0.08)", borderRadius: 999, overflow: "hidden" }}>
-                  <div
-                    style={{
-                      width: `${Math.min(row.ability_score, 100)}%`,
-                      height: "100%",
-                      borderRadius: 999,
-                      background: signalColor(row.signal),
-                    }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    </button>
-  );
-}
-
-export default function App() {
+function App() {
   const [raceListView, setRaceListView] = useState<RaceListRow[]>([]);
   const [raceDetailView, setRaceDetailView] = useState<RaceDetailRow[]>([]);
   const [finalBetPlan, setFinalBetPlan] = useState<FinalBetPlanRow[]>([]);
   const [finalMultiBets, setFinalMultiBets] = useState<FinalMultiBetsRow[]>([]);
   const [betAmounts, setBetAmounts] = useState<BetAmountsRow[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [showAllHorses, setShowAllHorses] = useState(true);
+
+  const [showTopOnly, setShowTopOnly] = useState(false);
   const [sortMode, setSortMode] = useState<"rank" | "ability" | "win" | "top3" | "horse_no">("rank");
   const [mainTab, setMainTab] = useState<"list" | "summary" | "results">("list");
   const [detailTab, setDetailTab] = useState<"pred" | "bets">("pred");
   const [selectedVenue, setSelectedVenue] = useState<string>("");
   const [selectedRaceId, setSelectedRaceId] = useState<string>("");
+
   const [adminOpen, setAdminOpen] = useState(false);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
+
+  const isMobile = typeof window !== "undefined" ? window.innerWidth < 768 : false;
 
   useEffect(() => {
     async function init() {
@@ -387,11 +244,11 @@ export default function App() {
         setLoading(true);
         setLoadError("");
 
-        const raceListRows = await loadCsv<RaceListRow>("/data/race_list_view.csv");
-        const raceDetailRows = await loadCsv<RaceDetailRow>("/data/race_detail_view.csv");
-        const finalBetRows = await loadCsv<FinalBetPlanRow>("/data/final_bet_plan.csv");
-        const finalMultiRows = await loadCsv<FinalMultiBetsRow>("/data/final_multi_bets.csv");
-        const betAmountRows = await loadCsv<BetAmountsRow>("/data/bet_amounts.csv");
+        const raceListRows = await loadCsv<RaceListRow>(`/data/race_list_view.csv?t=${Date.now()}`);
+        const raceDetailRows = await loadCsv<RaceDetailRow>(`/data/race_detail_view.csv?t=${Date.now()}`);
+        const finalBetRows = await loadCsv<FinalBetPlanRow>(`/data/final_bet_plan.csv?t=${Date.now()}`);
+        const finalMultiRows = await loadCsv<FinalMultiBetsRow>(`/data/final_multi_bets.csv?t=${Date.now()}`);
+        const betAmountRows = await loadCsv<BetAmountsRow>(`/data/bet_amounts.csv?t=${Date.now()}`);
 
         const normalizedRaceList = raceListRows.map((r: any) => ({
           ...r,
@@ -408,6 +265,8 @@ export default function App() {
           ability_score: toNum(r.ability_score),
           win_prob: toNum(r.win_prob),
           top3_prob: toNum(r.top3_prob),
+          win_odds: toNum(r.win_odds),
+          win_ev: toNum(r.win_ev),
         }));
 
         const normalizedFinalBet = finalBetRows.map((r: any) => ({
@@ -524,17 +383,17 @@ export default function App() {
         style={{
           background: "linear-gradient(135deg, #0f1f67 0%, #5b1c74 100%)",
           color: "#fff",
-          padding: "28px 20px 22px",
+          padding: isMobile ? "18px 14px 16px" : "28px 20px 22px",
           borderBottom: "1px solid rgba(255,255,255,0.08)",
         }}
       >
         <div style={{ maxWidth: 1280, margin: "0 auto" }}>
-          <div style={{ fontSize: 18, fontWeight: 800 }}>競馬AI</div>
-          <div style={{ fontSize: 12, letterSpacing: 2, marginTop: 4, color: "#d7ddff" }}>
+          <div style={{ fontSize: isMobile ? 16 : 18, fontWeight: 800 }}>競馬AI</div>
+          <div style={{ fontSize: isMobile ? 10 : 12, letterSpacing: 2, marginTop: 4, color: "#d7ddff" }}>
             HORSE RACING PREDICTOR
           </div>
 
-          <div style={{ display: "flex", gap: 10, marginTop: 26 }}>
+          <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
             {[
               ["list", "レース一覧"],
               ["summary", "詳細予想"],
@@ -549,9 +408,9 @@ export default function App() {
                   background: mainTab === key ? "rgba(244,216,78,0.10)" : "rgba(255,255,255,0.04)",
                   color: "#fff",
                   borderRadius: 16,
-                  padding: "14px 12px",
+                  padding: isMobile ? "12px 8px" : "14px 12px",
                   fontWeight: 800,
-                  fontSize: 16,
+                  fontSize: isMobile ? 14 : 16,
                   cursor: "pointer",
                 }}
               >
@@ -562,19 +421,7 @@ export default function App() {
         </div>
       </div>
 
-      <div style={{ maxWidth: 1280, margin: "0 auto", padding: 20, display: "grid", gap: 18 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
-          <StatCard title="対象レース数" value={raceListView.length} />
-          <StatCard title="期待値推奨馬" value={`${finalBetPlan.length}頭`} />
-          <StatCard title="競馬場数" value={`${venues.length}場`} />
-          <StatCard
-            title="平均AI指数"
-            value={(
-              raceListView.reduce((sum, r) => sum + toNum(r.pred_top_ability), 0) / Math.max(raceListView.length, 1)
-            ).toFixed(1)}
-          />
-        </div>
-
+      <div style={{ maxWidth: 1280, margin: "0 auto", padding: isMobile ? 12 : 20, display: "grid", gap: 16 }}>
         <div
           style={{
             background: "rgba(18,24,52,0.95)",
@@ -596,9 +443,9 @@ export default function App() {
                   background: selectedVenue === venue ? "rgba(87,183,255,0.18)" : "rgba(255,255,255,0.04)",
                   color: "#fff",
                   borderRadius: 14,
-                  padding: "12px 18px",
+                  padding: isMobile ? "10px 14px" : "12px 18px",
                   fontWeight: 800,
-                  fontSize: 15,
+                  fontSize: isMobile ? 14 : 15,
                   cursor: "pointer",
                 }}
               >
@@ -609,22 +456,161 @@ export default function App() {
         </div>
 
         {mainTab === "list" && (
-          <div style={{ display: "grid", gap: 18 }}>
-            {venueRaces.map((race) => (
-              <RaceListCard
-                key={race.race_id}
-                race={race}
-                active={race.race_id === selectedRace?.race_id}
-                detailRows={raceDetailView
-                  .filter((x) => x.race_id === race.race_id)
-                  .sort((a, b) => toNum(a.win_rank) - toNum(b.win_rank))}
-                onClick={() => {
-                  setSelectedRaceId(race.race_id);
-                  setMainTab("summary");
-                  setDetailTab("pred");
-                }}
-              />
-            ))}
+          <div style={{ display: "grid", gap: 16 }}>
+            {venueRaces.map((race) => {
+              const listRows = raceDetailView
+                .filter((x) => x.race_id === race.race_id)
+                .sort((a, b) => toNum(a.win_rank) - toNum(b.win_rank))
+                .slice(0, 5);
+
+              return (
+                <button
+                  key={race.race_id}
+                  onClick={() => {
+                    setSelectedRaceId(race.race_id);
+                    setMainTab("summary");
+                    setDetailTab("pred");
+                  }}
+                  style={{
+                    width: "100%",
+                    background: "linear-gradient(180deg, rgba(27,32,64,0.98) 0%, rgba(22,27,56,0.98) 100%)",
+                    border: race.race_id === selectedRace?.race_id
+                      ? "1px solid rgba(244,216,78,0.8)"
+                      : "1px solid rgba(255,255,255,0.08)",
+                    borderRadius: 24,
+                    overflow: "hidden",
+                    padding: 0,
+                    cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "stretch" }}>
+                    <div
+                      style={{
+                        width: isMobile ? 72 : 88,
+                        background: "linear-gradient(180deg, #101d67 0%, #0d1749 100%)",
+                        color: "#fff",
+                        padding: isMobile ? "14px 8px" : "18px 10px",
+                        display: "flex",
+                        flexDirection: "column",
+                        justifyContent: "center",
+                        alignItems: "center",
+                        gap: 2,
+                      }}
+                    >
+                      <div style={{ fontSize: isMobile ? 28 : 36, fontWeight: 800, lineHeight: 1 }}>{race.race_no}</div>
+                      <div style={{ fontSize: isMobile ? 12 : 13, opacity: 0.9 }}>{race.field_size}頭</div>
+                    </div>
+
+                    <div style={{ flex: 1, padding: isMobile ? 14 : 18 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "flex-start",
+                          gap: 10,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontSize: isMobile ? 12 : 13, color: "#9aa7cf" }}>
+                            {venueLabel(race.venue)} / {race.distance || "-"} / {race.field_size}頭
+                          </div>
+                          <div style={{ marginTop: 4, fontSize: isMobile ? 18 : 20, fontWeight: 900, color: "#ffffff" }}>
+                            {venueLabel(race.venue)}
+                            {race.race_no}R {race.race_name}
+                          </div>
+                        </div>
+
+                        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                          <SmallBadge bg={confidenceBg(race.pred_top_confidence)} color="#fff">
+                            信頼度 {race.pred_top_confidence}
+                          </SmallBadge>
+                          <SmallBadge bg="rgba(255,255,255,0.08)" color="#fff">
+                            {chaosLabel(race.chaos_band)}
+                          </SmallBadge>
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+                        {listRows.map((row) => (
+                          <div
+                            key={`${row.race_id}-${row.horse_no}`}
+                            style={{
+                              display: "grid",
+                              gridTemplateColumns: isMobile ? "32px minmax(0, 1.8fr) 56px minmax(90px, 1fr)" : "40px minmax(0, 2fr) 74px minmax(140px, 1fr)",
+                              alignItems: "center",
+                              gap: isMobile ? 8 : 12,
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: isMobile ? 28 : 32,
+                                height: isMobile ? 28 : 32,
+                                borderRadius: 999,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                background: row.win_rank <= 3 ? signalColor(row.signal) : "rgba(255,255,255,0.08)",
+                                color: row.win_rank <= 3 ? "#1f2340" : "#d1d8f0",
+                                fontWeight: 800,
+                                fontSize: isMobile ? 12 : 14,
+                              }}
+                            >
+                              {row.horse_no}
+                            </div>
+
+                            <div style={{ minWidth: 0 }}>
+                              <div
+                                style={{
+                                  fontSize: isMobile ? 14 : 16,
+                                  fontWeight: 800,
+                                  color: "#eef2ff",
+                                  whiteSpace: "nowrap",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                }}
+                              >
+                                {row.horse_name}
+                              </div>
+                            </div>
+
+                            <div
+                              style={{
+                                fontSize: isMobile ? 14 : 16,
+                                fontWeight: 900,
+                                color: signalColor(row.signal),
+                                textAlign: "right",
+                              }}
+                            >
+                              {row.ability_score.toFixed(1)}
+                            </div>
+
+                            <div
+                              style={{
+                                height: isMobile ? 10 : 12,
+                                background: "rgba(255,255,255,0.08)",
+                                borderRadius: 999,
+                                overflow: "hidden",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  width: `${Math.min(row.ability_score, 100)}%`,
+                                  height: "100%",
+                                  borderRadius: 999,
+                                  background: signalColor(row.signal),
+                                }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -643,9 +629,9 @@ export default function App() {
                     background: detailTab === key ? "rgba(244,216,78,0.12)" : "rgba(255,255,255,0.04)",
                     color: detailTab === key ? "#fff3a6" : "#d7ddff",
                     borderRadius: 999,
-                    padding: "12px 18px",
+                    padding: isMobile ? "10px 14px" : "12px 18px",
                     fontWeight: 800,
-                    fontSize: 15,
+                    fontSize: isMobile ? 14 : 15,
                     cursor: "pointer",
                   }}
                 >
@@ -670,9 +656,9 @@ export default function App() {
                         background: sortMode === key ? "rgba(244,216,78,0.12)" : "rgba(255,255,255,0.04)",
                         color: sortMode === key ? "#fff3a6" : "#d7ddff",
                         borderRadius: 999,
-                        padding: "10px 14px",
+                        padding: isMobile ? "8px 12px" : "10px 14px",
                         fontWeight: 700,
-                        fontSize: 13,
+                        fontSize: isMobile ? 12 : 13,
                         cursor: "pointer",
                       }}
                     >
@@ -681,20 +667,20 @@ export default function App() {
                   ))}
 
                   <button
-                    onClick={() => setShowAllHorses((v) => !v)}
+                    onClick={() => setShowTopOnly((v) => !v)}
                     style={{
                       marginLeft: "auto",
                       border: "1px solid rgba(255,255,255,0.12)",
                       background: "rgba(255,255,255,0.04)",
                       color: "#d7ddff",
                       borderRadius: 999,
-                      padding: "10px 14px",
+                      padding: isMobile ? "8px 12px" : "10px 14px",
                       fontWeight: 700,
-                      fontSize: 13,
+                      fontSize: isMobile ? 12 : 13,
                       cursor: "pointer",
                     }}
                   >
-                    {showAllHorses ? "上位5頭だけ表示" : "全頭表示"}
+                    {showTopOnly ? "全頭表示" : "上位5頭だけ表示"}
                   </button>
                 </>
               )}
@@ -706,18 +692,17 @@ export default function App() {
                   background: "linear-gradient(180deg, rgba(27,32,64,0.98) 0%, rgba(22,27,56,0.98) 100%)",
                   border: "1px solid rgba(255,255,255,0.08)",
                   borderRadius: 24,
-                  padding: 20,
+                  padding: isMobile ? 14 : 20,
                 }}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
                   <div>
-                    <div style={{ fontSize: 34, fontWeight: 900, color: "#ffffff" }}>
+                    <div style={{ fontSize: isMobile ? 28 : 34, fontWeight: 900, color: "#ffffff" }}>
                       {venueLabel(selectedRace.venue)}
                       {selectedRace.race_no}R {selectedRace.race_name}
                     </div>
-                    <div style={{ marginTop: 6, color: "#aab4d6", fontSize: 16 }}>
-                      {selectedRace.distance || "-"} / {selectedRace.field_size}頭 / 傾向 :{" "}
-                      {chaosLabel(selectedRace.chaos_band)}
+                    <div style={{ marginTop: 6, color: "#aab4d6", fontSize: isMobile ? 14 : 16 }}>
+                      {selectedRace.distance || "-"} / {selectedRace.field_size}頭 / 傾向 : {chaosLabel(selectedRace.chaos_band)}
                     </div>
                   </div>
                   <SmallBadge bg={confidenceBg(selectedRace.pred_top_confidence)} color="#fff">
@@ -726,24 +711,24 @@ export default function App() {
                 </div>
 
                 <div style={{ display: "grid", gap: 12, marginTop: 20 }}>
-                  {(showAllHorses ? details : details.slice(0, 5)).map((h) => (
+                  {(showTopOnly ? details.slice(0, 5) : details).map((h) => (
                     <div
                       key={`${h.race_id}-${h.horse_no}`}
                       style={{
                         border: "1px solid rgba(255,255,255,0.08)",
                         background: "rgba(255,255,255,0.02)",
                         borderRadius: 18,
-                        padding: 16,
+                        padding: isMobile ? 14 : 16,
                         display: "grid",
-                        gridTemplateColumns: "70px 1fr 120px 280px",
-                        gap: 14,
+                        gridTemplateColumns: isMobile ? "52px minmax(0, 1.8fr) 78px 1.1fr" : "70px minmax(0, 2fr) 120px 280px",
+                        gap: isMobile ? 10 : 14,
                         alignItems: "center",
                       }}
                     >
                       <div
                         style={{
-                          width: 54,
-                          height: 54,
+                          width: isMobile ? 46 : 54,
+                          height: isMobile ? 46 : 54,
                           borderRadius: 999,
                           background: h.win_rank <= 3 ? signalColor(h.signal) : "rgba(255,255,255,0.08)",
                           color: h.win_rank <= 3 ? "#1f2340" : "#eef2ff",
@@ -751,15 +736,26 @@ export default function App() {
                           alignItems: "center",
                           justifyContent: "center",
                           fontWeight: 900,
-                          fontSize: 20,
+                          fontSize: isMobile ? 18 : 20,
                         }}
                       >
                         {h.horse_no}
                       </div>
 
-                      <div>
-                        <div style={{ fontSize: 22, fontWeight: 900, color: "#ffffff" }}>{h.horse_name}</div>
-                        <div style={{ color: "#aab4d6", marginTop: 4, fontSize: 14 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontSize: isMobile ? 15 : 22,
+                            fontWeight: 900,
+                            color: "#ffffff",
+                            lineHeight: 1.25,
+                            wordBreak: "break-word",
+                            overflowWrap: "anywhere",
+                          }}
+                        >
+                          {h.horse_name}
+                        </div>
+                        <div style={{ color: "#aab4d6", marginTop: 6, fontSize: isMobile ? 12 : 14 }}>
                           {h.jockey_name} / 枠{h.gate_no} / 予測{h.win_rank}位
                         </div>
                         <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
@@ -775,7 +771,7 @@ export default function App() {
                       <div style={{ display: "grid", justifyItems: "center", gap: 2 }}>
                         <div
                           style={{
-                            fontSize: 40,
+                            fontSize: isMobile ? 24 : 40,
                             fontWeight: 900,
                             color: signalColor(h.signal),
                             lineHeight: 1,
@@ -784,7 +780,7 @@ export default function App() {
                         >
                           {h.ability_score.toFixed(1)}
                         </div>
-                        <div style={{ fontSize: 12, color: "#aab4d6" }}>AI指数</div>
+                        <div style={{ fontSize: isMobile ? 11 : 12, color: "#aab4d6" }}>AI指数</div>
                       </div>
 
                       <div style={{ display: "grid", gap: 10 }}>
@@ -793,7 +789,7 @@ export default function App() {
                             style={{
                               display: "flex",
                               justifyContent: "space-between",
-                              fontSize: 12,
+                              fontSize: isMobile ? 11 : 12,
                               color: "#aab4d6",
                               marginBottom: 4,
                             }}
@@ -803,7 +799,7 @@ export default function App() {
                           </div>
                           <div
                             style={{
-                              height: 10,
+                              height: isMobile ? 8 : 10,
                               background: "rgba(255,255,255,0.08)",
                               borderRadius: 999,
                               overflow: "hidden",
@@ -825,7 +821,7 @@ export default function App() {
                             style={{
                               display: "flex",
                               justifyContent: "space-between",
-                              fontSize: 12,
+                              fontSize: isMobile ? 11 : 12,
                               color: "#aab4d6",
                               marginBottom: 4,
                             }}
@@ -835,7 +831,7 @@ export default function App() {
                           </div>
                           <div
                             style={{
-                              height: 10,
+                              height: isMobile ? 8 : 10,
                               background: "rgba(255,255,255,0.08)",
                               borderRadius: 999,
                               overflow: "hidden",
@@ -859,16 +855,22 @@ export default function App() {
             )}
 
             {detailTab === "bets" && (
-              <div style={{ display: "grid", gridTemplateColumns: "380px 1fr", gap: 16 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: isMobile ? "1fr" : "minmax(0, 1fr) minmax(0, 1.2fr)",
+                  gap: 16,
+                }}
+              >
                 <div
                   style={{
                     background: "linear-gradient(180deg, rgba(27,32,64,0.98) 0%, rgba(22,27,56,0.98) 100%)",
                     border: "1px solid rgba(255,255,255,0.08)",
                     borderRadius: 24,
-                    padding: 20,
+                    padding: isMobile ? 16 : 20,
                   }}
                 >
-                  <div style={{ fontSize: 22, fontWeight: 900, color: "#ffe98c" }}>期待値推奨馬</div>
+                  <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 900, color: "#ffe98c" }}>期待値推奨馬</div>
                   <div style={{ display: "grid", gap: 12, marginTop: 16 }}>
                     {betPlan.length === 0 && <div style={{ color: "#aab4d6" }}>該当なし</div>}
 
@@ -879,13 +881,22 @@ export default function App() {
                           border: "1px solid rgba(255,255,255,0.08)",
                           background: "rgba(255,255,255,0.02)",
                           borderRadius: 18,
-                          padding: 16,
+                          padding: isMobile ? 14 : 16,
                         }}
                       >
-                        <div style={{ fontSize: 22, fontWeight: 900, color: "#fff" }}>
+                        <div
+                          style={{
+                            fontSize: isMobile ? 18 : 22,
+                            fontWeight: 900,
+                            color: "#fff",
+                            lineHeight: 1.3,
+                            wordBreak: "break-word",
+                            overflowWrap: "anywhere",
+                          }}
+                        >
                           {b.horse_no ? `${b.horse_no} ${b.horse_name}` : b.horse_name}
                         </div>
-                        <div style={{ color: "#aab4d6", marginTop: 4 }}>{b.race_name}</div>
+                        <div style={{ color: "#aab4d6", marginTop: 4, fontSize: isMobile ? 13 : 14 }}>{b.race_name}</div>
                         <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                           <SmallBadge bg="rgba(255,255,255,0.08)" color={signalColor(b.signal)}>
                             {signalLabel(b.signal)}
@@ -897,11 +908,12 @@ export default function App() {
                             期待値 {b.win_ev}
                           </SmallBadge>
                         </div>
-                        <div style={{ marginTop: 12, fontSize: 14, color: "#d7ddff", lineHeight: 1.8 }}>
+
+                        <div style={{ marginTop: 12, fontSize: isMobile ? 13 : 14, color: "#d7ddff", lineHeight: 1.8 }}>
                           <div>
                             勝率: <b>{pct(b.win_prob)}</b>
                           </div>
-                          <div>
+                          <div style={{ wordBreak: "break-word", overflowWrap: "anywhere" }}>
                             理由: <b>{b.reason}</b>
                           </div>
                         </div>
@@ -915,11 +927,14 @@ export default function App() {
                     background: "linear-gradient(180deg, rgba(27,32,64,0.98) 0%, rgba(22,27,56,0.98) 100%)",
                     border: "1px solid rgba(255,255,255,0.08)",
                     borderRadius: 24,
-                    padding: 20,
+                    padding: isMobile ? 16 : 20,
                   }}
                 >
-                  <div style={{ fontSize: 22, fontWeight: 900, color: "#ffe98c" }}>推奨馬券</div>
+                  <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 900, color: "#ffe98c" }}>推奨馬券</div>
+
                   <div style={{ display: "grid", gap: 14, marginTop: 16 }}>
+                    {multiBets.length === 0 && <div style={{ color: "#aab4d6" }}>該当なし</div>}
+
                     {multiBets.map((bet) => {
                       const amountRows = amounts.filter((x) => x.bet_type === bet.bet_type);
                       const typeBg =
@@ -942,12 +957,25 @@ export default function App() {
                             border: `1px solid ${typeColor}33`,
                             background: typeBg,
                             borderRadius: 18,
-                            padding: 16,
+                            padding: isMobile ? 14 : 16,
                           }}
                         >
-                          <div style={{ fontWeight: 900, fontSize: 18, color: typeColor }}>
+                          <div
+                            style={{
+                              fontWeight: 900,
+                              fontSize: isMobile ? 16 : 18,
+                              color: typeColor,
+                              lineHeight: 1.35,
+                              wordBreak: "break-word",
+                              overflowWrap: "anywhere",
+                            }}
+                          >
                             {bet.bet_type} / 軸: {bet.axis_horse}
                           </div>
+
+                          {bet.comment && (
+                            <div style={{ marginTop: 8, fontSize: isMobile ? 12 : 13, color: "#d7ddff" }}>{bet.comment}</div>
+                          )}
 
                           <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
                             {bet.bets.split(" / ").map((b, idx) => {
@@ -958,21 +986,27 @@ export default function App() {
                                   style={{
                                     background: "rgba(255,255,255,0.04)",
                                     borderRadius: 12,
-                                    padding: "12px 14px",
+                                    padding: isMobile ? "10px 12px" : "12px 14px",
                                     display: "flex",
                                     justifyContent: "space-between",
+                                    alignItems: "flex-start",
                                     gap: 12,
-                                    fontSize: 14,
+                                    fontSize: isMobile ? 13 : 14,
                                     color: "#eef2ff",
                                   }}
                                 >
-                                  <span>{b.trim()}</span>
-                                  <b style={{ color: typeColor }}>
-                                    {row?.amount_percent
-                                      ? `${row.amount_percent}%`
-                                      : row?.amount
-                                        ? `${row.amount}円`
-                                        : "-"}
+                                  <span
+                                    style={{
+                                      flex: 1,
+                                      wordBreak: "break-word",
+                                      overflowWrap: "anywhere",
+                                      lineHeight: 1.5,
+                                    }}
+                                  >
+                                    {b.trim()}
+                                  </span>
+                                  <b style={{ color: typeColor, whiteSpace: "nowrap" }}>
+                                    {row?.amount_percent ? `${row.amount_percent}%` : row?.amount ? `${row.amount}円` : "-"}
                                   </b>
                                 </div>
                               );
@@ -1004,7 +1038,7 @@ export default function App() {
           </div>
         )}
 
-        <div style={{ marginTop: 20, display: "grid", gap: 10 }}>
+        <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
           <button
             onClick={() => setAdminOpen((v) => !v)}
             style={{
@@ -1035,7 +1069,7 @@ export default function App() {
               {!adminUnlocked ? (
                 <>
                   <div style={{ fontSize: 14, fontWeight: 700, color: "#eef2ff" }}>パスワード入力</div>
-                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                     <input
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
@@ -1070,7 +1104,7 @@ export default function App() {
               ) : (
                 <>
                   <div style={{ fontSize: 14, fontWeight: 700, color: "#eef2ff" }}>CSVアップロード</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 12 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(5, minmax(0, 1fr))", gap: 12 }}>
                     <FileLoader
                       label="race_list_view.csv"
                       onFile={(file) =>
@@ -1099,6 +1133,8 @@ export default function App() {
                               ability_score: toNum(r.ability_score),
                               win_prob: toNum(r.win_prob),
                               top3_prob: toNum(r.top3_prob),
+                              win_odds: toNum(r.win_odds),
+                              win_ev: toNum(r.win_ev),
                             })),
                           ),
                         )
@@ -1149,3 +1185,5 @@ export default function App() {
     </div>
   );
 }
+
+export default App;
