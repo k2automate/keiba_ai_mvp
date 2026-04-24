@@ -19,12 +19,16 @@ type RaceDetailRow = {
   race_id: string;
   race_name: string;
   win_rank: number;
-  calculated_rank?: number; // 追加：UIで計算する予測順位
+  rank_in_race?: number;
+  calculated_rank?: number;
   gate_no: number;
   horse_no: number;
   horse_name: string;
   jockey_name: string;
   signal: string;
+  印?: string;
+  mark?: string;
+  recommendation?: string;
   confidence_label: string;
   ability_score: number;
   win_prob: number;
@@ -99,11 +103,16 @@ function venueLabel(v: string) {
   return v;
 }
 
-// === 🌟 追加：枠番カラーの判定関数 ===
 function getWakuBgColor(gateNo: number) {
   const colors: Record<number, string> = {
-    1: "#FFFFFF", 2: "#111111", 3: "#FF3B3B", 4: "#3B3BFF",
-    5: "#FFEB3B", 6: "#4CAF50", 7: "#FF9800", 8: "#FF80AB",
+    1: "#FFFFFF",
+    2: "#111111",
+    3: "#FF3B3B",
+    4: "#3B3BFF",
+    5: "#FFEB3B",
+    6: "#4CAF50",
+    7: "#FF9800",
+    8: "#FF80AB",
   };
   return colors[gateNo] || "rgba(255,255,255,0.08)";
 }
@@ -112,21 +121,38 @@ function getWakuTextColor(gateNo: number) {
   return gateNo === 1 || gateNo === 5 ? "#111111" : "#FFFFFF";
 }
 
+function cleanSignal(signal: string | undefined | null) {
+  return String(signal || "").trim();
+}
+
 function signalColor(signal: string) {
-  if (signal === "軸") return "#f4d84e";
-  if (signal === "複勝圏") return "#86f7f2";
-  if (signal === "能力注") return "#d8b4fe";
+  const s = cleanSignal(signal);
+
+  if (s === "軸") return "#f4d84e";
+  if (s === "対抗") return "#86f7f2";
+  if (s === "穴") return "#ff9f43";
+  if (s === "連下") return "#7dd3fc";
+
+  if (s === "複勝圏") return "#86f7f2";
+  if (s === "能力注") return "#d8b4fe";
+
   return "#bfd6ff";
 }
 
 function signalLabel(signal: string) {
-  if (signal === "軸") return "◎ 軸";
-  if (signal === "複勝圏") return "○ 複勝圏";
-  if (signal === "能力注") return "▲ 注目";
+  const s = cleanSignal(signal);
+
+  if (s === "軸") return "◎ 軸";
+  if (s === "対抗") return "○ 対抗";
+  if (s === "穴") return "▲ 穴";
+  if (s === "連下") return "△ 連下";
+
+  if (s === "複勝圏") return "○ 複勝圏";
+  if (s === "能力注") return "▲ 注目";
+
   return "△ 様子見";
 }
 
-// === 🌟 修正：信頼度S〜Cの色分けを拡張 ===
 function confidenceBg(conf: string) {
   if (conf === "S") return "rgba(244,216,78,0.18)";
   if (conf === "A") return "rgba(134,247,242,0.18)";
@@ -342,8 +368,10 @@ function App() {
         const normalizedRaceDetail = raceDetailRows.map((r: any) => ({
           ...r,
           win_rank: toNum(r.win_rank),
+          rank_in_race: toNum(r.rank_in_race),
           gate_no: toNum(r.gate_no),
           horse_no: toNum(r.horse_no),
+          signal: cleanSignal(r.signal || r.印 || r.mark || r.recommendation),
           ability_score: toNum(r.ability_score),
           win_prob: toNum(r.win_prob),
           top3_prob: toNum(r.top3_prob),
@@ -354,6 +382,7 @@ function App() {
         const normalizedFinalBet = finalBetRows.map((r: any) => ({
           ...r,
           horse_no: toNum(r.horse_no),
+          signal: cleanSignal(r.signal || r.印 || r.mark || r.recommendation),
           win_prob: toNum(r.win_prob),
           win_odds: toNum(r.win_odds),
           win_ev: toNum(r.win_ev),
@@ -408,23 +437,30 @@ function App() {
     return venueRaces[selectedRaceIndex + 1];
   }, [venueRaces, selectedRaceIndex]);
 
-  // === 🌟 修正：予測順位(calculated_rank)をAI指数から動的に計算 ===
   const details = useMemo(() => {
     const rows = raceDetailView.filter((x) => x.race_id === selectedRace?.race_id);
-    
-    // まずAI指数が高い順に並べて「予測順位」を振る
-    const rankedRows = [...rows]
-      .sort((a, b) => toNum(b.ability_score) - toNum(a.ability_score))
-      .map((r, i) => ({ ...r, calculated_rank: i + 1 }));
 
-    // その後、ユーザーが選んだソートモードで並べ替える
+    const rankedRows = [...rows]
+      .sort((a, b) => {
+        const ar = toNum(a.rank_in_race);
+        const br = toNum(b.rank_in_race);
+
+        if (ar > 0 && br > 0) return ar - br;
+        return toNum(b.ability_score) - toNum(a.ability_score);
+      })
+      .map((r, i) => ({
+        ...r,
+        calculated_rank: toNum(r.rank_in_race) > 0 ? toNum(r.rank_in_race) : i + 1,
+      }));
+
     const sorted = [...rankedRows].sort((a, b) => {
       if (sortMode === "ability") return toNum(b.ability_score) - toNum(a.ability_score);
       if (sortMode === "win") return toNum(b.win_prob) - toNum(a.win_prob);
       if (sortMode === "top3") return toNum(b.top3_prob) - toNum(a.top3_prob);
       if (sortMode === "horse_no") return toNum(a.horse_no) - toNum(b.horse_no);
-      return toNum(a.calculated_rank) - toNum(b.calculated_rank); // rank順
+      return toNum(a.calculated_rank) - toNum(b.calculated_rank);
     });
+
     return sorted;
   }, [raceDetailView, selectedRace, sortMode]);
 
@@ -477,7 +513,8 @@ function App() {
         minHeight: "100vh",
         background: "linear-gradient(180deg, #11152d 0%, #161b38 100%)",
         color: "#eef2ff",
-        fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        fontFamily:
+          'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       }}
     >
       <div
@@ -580,7 +617,12 @@ function App() {
             {venueRaces.map((race) => {
               const listRows = raceDetailView
                 .filter((x) => x.race_id === race.race_id)
-                .sort((a, b) => toNum(b.ability_score) - toNum(a.ability_score)) // AI指数順で上位を取得
+                .sort((a, b) => {
+                  const ar = toNum(a.rank_in_race);
+                  const br = toNum(b.rank_in_race);
+                  if (ar > 0 && br > 0) return ar - br;
+                  return toNum(b.ability_score) - toNum(a.ability_score);
+                })
                 .slice(0, 5);
 
               return (
@@ -662,13 +704,12 @@ function App() {
                             style={{
                               display: "grid",
                               gridTemplateColumns: isMobile
-                                ? "32px minmax(0, 1.8fr) 56px minmax(90px, 1fr)"
-                                : "40px minmax(0, 2fr) 74px minmax(140px, 1fr)",
+                                ? "32px minmax(0, 1.8fr) 70px 56px minmax(90px, 1fr)"
+                                : "40px minmax(0, 2fr) 90px 74px minmax(140px, 1fr)",
                               alignItems: "center",
                               gap: isMobile ? 8 : 12,
                             }}
                           >
-                            {/* === 🌟 枠色適用 === */}
                             <div
                               style={{
                                 width: isMobile ? 28 : 32,
@@ -702,7 +743,10 @@ function App() {
                               </div>
                             </div>
 
-                            {/* === 🌟 80以上発光 === */}
+                            <SmallBadge bg="rgba(255,255,255,0.08)" color={signalColor(row.signal)}>
+                              {signalLabel(row.signal)}
+                            </SmallBadge>
+
                             <div
                               style={{
                                 fontSize: isMobile ? 14 : 16,
@@ -856,7 +900,6 @@ function App() {
                         alignItems: "center",
                       }}
                     >
-                      {/* === 🌟 枠色適用 === */}
                       <div
                         style={{
                           width: isMobile ? 46 : 54,
@@ -889,7 +932,6 @@ function App() {
                           {h.horse_name}
                         </div>
 
-                        {/* === 🌟 予測順位の適用 === */}
                         <div style={{ color: "#aab4d6", marginTop: 6, fontSize: isMobile ? 12 : 14 }}>
                           {h.jockey_name} / 枠{h.gate_no} / 予測{h.calculated_rank}位
                         </div>
@@ -907,7 +949,6 @@ function App() {
                       </div>
 
                       <div style={{ display: "grid", justifyItems: "center", gap: 2 }}>
-                        {/* === 🌟 80以上発光 === */}
                         <div
                           style={{
                             fontSize: isMobile ? 24 : 40,
@@ -1003,8 +1044,12 @@ function App() {
                         </div>
 
                         <div style={{ marginTop: 12, fontSize: isMobile ? 13 : 14, color: "#d7ddff", lineHeight: 1.8 }}>
-                          <div>勝率: <b>{pct(b.win_prob)}</b></div>
-                          <div style={{ wordBreak: "break-word", overflowWrap: "anywhere" }}>理由: <b>{b.reason}</b></div>
+                          <div>
+                            勝率: <b>{pct(b.win_prob)}</b>
+                          </div>
+                          <div style={{ wordBreak: "break-word", overflowWrap: "anywhere" }}>
+                            理由: <b>{b.reason}</b>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -1127,9 +1172,6 @@ function App() {
           </div>
         )}
 
-        {/* =========================================
-            🌟 復元：一番下の管理人専用パネル（絶対消さない！）
-            ========================================= */}
         <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
           <button
             onClick={() => setAdminOpen((v) => !v)}
@@ -1220,8 +1262,10 @@ function App() {
                             rows.map((r: any) => ({
                               ...r,
                               win_rank: toNum(r.win_rank),
+                              rank_in_race: toNum(r.rank_in_race),
                               gate_no: toNum(r.gate_no),
                               horse_no: toNum(r.horse_no),
+                              signal: cleanSignal(r.signal || r.印 || r.mark || r.recommendation),
                               ability_score: toNum(r.ability_score),
                               win_prob: toNum(r.win_prob),
                               top3_prob: toNum(r.top3_prob),
@@ -1240,6 +1284,7 @@ function App() {
                             rows.map((r: any) => ({
                               ...r,
                               horse_no: toNum(r.horse_no),
+                              signal: cleanSignal(r.signal || r.印 || r.mark || r.recommendation),
                               win_prob: toNum(r.win_prob),
                               win_odds: toNum(r.win_odds),
                               win_ev: toNum(r.win_ev),

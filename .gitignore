@@ -20,3 +20,5 @@ __pycache__/
 !ui/public/
 !ui/public/data/
 !ui/public/data/*.csv
+.vercel
+.env*.local
