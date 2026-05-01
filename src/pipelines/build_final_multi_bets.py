@@ -1,78 +1,64 @@
+import os
+import shutil
 import pandas as pd
 import itertools
-import os
+
+INPUT_PATH = "data/predictions/race_detail_view.csv"
+OUTPUT_PATH = "data/predictions/final_multi_bets.csv"
 
 def build_final_multi_bets():
-    input_path = "data/predictions/race_detail_view.csv"
-    output_path = "data/predictions/final_multi_bets.csv"
-    
-    if not os.path.exists(input_path):
-        print(f"Error: {input_path} が見つかりません。")
-        return
-        
-    df = pd.read_csv(input_path)
-    results = []
-    
-    for race_id, group in df.groupby("race_id"):
-        race_name = group["race_name"].iloc[0] if "race_name" in group.columns else ""
-        
-        # 1. 軸馬を1頭選ぶ（一番AI指数が高い馬）
-        axis_candidates = group[group["signal"].isin(["軸", "複勝圏"])].sort_values("ability_score", ascending=False)
-        if axis_candidates.empty:
-            axis_candidates = group.sort_values("ability_score", ascending=False)
-        
-        axis = axis_candidates.iloc[0]
-        axis_no = axis["horse_no"]
-        axis_name = f"{axis_no} {axis['horse_name']}"
-        
-        # 2. 相手を5頭選ぶ（軸以外のAI指数上位5頭）
-        targets = group[group["horse_no"] != axis_no].sort_values("ability_score", ascending=False).head(5)
-        target_list = [f"{row['horse_no']} {row['horse_name']}" for _, row in targets.iterrows()]
-        
-        if len(target_list) < 2:
-            continue
+    if not os.path.exists(INPUT_PATH): return
+    df = pd.read_csv(INPUT_PATH, encoding="utf-8-sig")
+    final_bets = []
+    race_col = "race_id" if "race_id" in df.columns else "レース番号"
+    horse_no_col = "horse_no" if "horse_no" in df.columns else "馬番"
+
+    for race_id, grp in df.groupby(race_col):
+        # AI指数上位5頭を取得（上から順に ◎, ○, ▲, △, (星) に該当）
+        top_picks = grp.sort_values("ability_score", ascending=False).head(5)
+        if len(top_picks) < 3: continue
+        p1, p2, p3 = top_picks.iloc[0], top_picks.iloc[1], top_picks.iloc[2]
+        p4 = top_picks.iloc[3] if len(top_picks) > 3 else None
+        p5 = top_picks.iloc[4] if len(top_picks) > 4 else None
+
+        # ワイド
+        final_bets.append({"race_id": race_id, "bet_type": "ワイド", "numbers": f"{int(p1[horse_no_col])}-{int(p2[horse_no_col])}", "recommendation": "本線"})
+        final_bets.append({"race_id": race_id, "bet_type": "ワイド", "numbers": f"{int(p1[horse_no_col])}-{int(p3[horse_no_col])}", "recommendation": "抑え"})
+
+        # 馬連
+        for target in [p2, p3, p4, p5]:
+            if target is not None: final_bets.append({"race_id": race_id, "bet_type": "馬連", "numbers": f"{int(p1[horse_no_col])}-{int(target[horse_no_col])}", "recommendation": "流し"})
+
+        # 3連複
+        others = [str(int(p[horse_no_col])) for p in [p2, p3, p4, p5] if p is not None]
+        if len(others) >= 2:
+            for combo in itertools.combinations(others, 2):
+                final_bets.append({"race_id": race_id, "bet_type": "3連複", "numbers": f"{int(p1[horse_no_col])}-{'-'.join(combo)}", "recommendation": "軸1頭流し"})
+
+        # 🌟 3連単（ご要望のフォーメーションに変更！）
+        if p4 is not None:
+            n1 = str(int(p1[horse_no_col])) # ◎ (1位)
+            n2 = str(int(p2[horse_no_col])) # ○ (2位)
+            n3 = str(int(p3[horse_no_col])) # ▲ (3位)
+            n4 = str(int(p4[horse_no_col])) # △ (4位)
             
-        # --- 買い目の生成 ---
-        
-        # ① ワイド (軸1頭 - 相手上位2頭 = 2点)
-        wide_targets = target_list[:2]
-        wide_bets = " / ".join([f"{axis_name} - {t}" for t in wide_targets])
-        results.append({
-            "race_id": race_id, "race_name": race_name, "bet_type": "ワイド",
-            "axis_horse": axis_name, "bets": wide_bets, "comment": "軸1頭・相手上位2頭（2点）"
-        })
-        
-        # ② 馬連 (軸1頭 - 相手5頭 = 5点)
-        umaren_bets = " / ".join([f"{axis_name} - {t}" for t in target_list])
-        results.append({
-            "race_id": race_id, "race_name": race_name, "bet_type": "馬連",
-            "axis_horse": axis_name, "bets": umaren_bets, "comment": "軸1頭・相手5頭（5点）"
-        })
-        
-        # ③ 3連複 (軸1頭固定 - 相手5頭フォーメーション = 10点)
-        sanren_bets = []
-        for combo in itertools.combinations(target_list, 2):
-            sanren_bets.append(f"{axis_name} - {combo[0]} - {combo[1]}")
-        
-        results.append({
-            "race_id": race_id, "race_name": race_name, "bet_type": "3連複",
-            "axis_horse": axis_name, "bets": " / ".join(sanren_bets), "comment": "軸1頭・相手5頭（10点）"
-        })
+            # ◎○ → ◎○▲△ → ◎○▲△ の文字列を作成
+            formation_str = f"{n1},{n2} → {n1},{n2},{n3},{n4} → {n1},{n2},{n3},{n4}"
+            
+            final_bets.append({
+                "race_id": race_id, 
+                "bet_type": "3連単", 
+                "numbers": formation_str, 
+                "recommendation": "フォーメーション"
+            })
 
-        # ④ 3連単 (1着固定: 軸1頭 → 2・3着: 相手5頭 = 20点)
-        sanrentan_bets = []
-        # itertools.permutationsで順列（A→BとB→Aの両方）を生成
-        for perm in itertools.permutations(target_list, 2):
-            sanrentan_bets.append(f"{axis_name} → {perm[0]} → {perm[1]}")
-        
-        results.append({
-            "race_id": race_id, "race_name": race_name, "bet_type": "3連単",
-            "axis_horse": axis_name, "bets": " / ".join(sanrentan_bets), "comment": "1着固定・相手5頭（20点）"
-        })
-        
-    out_df = pd.DataFrame(results)
-    out_df.to_csv(output_path, index=False)
-    print("Successfully updated final_multi_bets.csv (ワイド2点・馬連5点・3連複10点・3連単20点)")
+    out_df = pd.DataFrame(final_bets)
+    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+    out_df.to_csv(OUTPUT_PATH, index=False, encoding="utf-8-sig")
+    
+    ui_data_dir = "ui/public/data/"
+    os.makedirs(ui_data_dir, exist_ok=True)
+    shutil.copy(OUTPUT_PATH, os.path.join(ui_data_dir, os.path.basename(OUTPUT_PATH)))
+    print(f"✅ 買い目構築完了: 3連単をフォーメーションに変更してUIへ転送しました！")
 
-if __name__ == "__main__":
-    build_final_multi_bets()
+if __name__ == "__main__": build_final_multi_bets()
