@@ -24,8 +24,17 @@ def harville_umaren(p1, p2):
     eps = 1e-9
     return p1*p2/(1-p1+eps) + p2*p1/(1-p2+eps)
 
-def wide_prob(p1_top3, p2_top3):
-    return p1_top3 * p2_top3 * 0.55
+# 🌟修正：ワイドの計算式を論理的に正しくしました
+def wide_prob(p1_top3, p2_top3, p_umaren):
+    # 複勝ベースの確率（0.55の過剰なペナルティを解除）
+    base_wide = p1_top3 * p2_top3 * 0.85
+    
+    # 【論理矛盾の防止】ワイド（3通り）は馬連（1通り）より必ず確率が高くなる。
+    # 経験則として馬連の約2.5倍になるため、最低でもその数値を担保する
+    calc_prob = max(base_wide, p_umaren * 2.5)
+    
+    # 確率が100%を超えないようにストッパーをかける
+    return min(calc_prob, 0.999)
 
 def calc_race_combinations(race_df):
     rows = []
@@ -53,7 +62,9 @@ def calc_race_combinations(race_df):
             mark1, mark2 = mark2, mark1
 
         p_umaren = harville_umaren(p1_win, p2_win)
-        p_wide   = wide_prob(p1_top3, p2_top3)
+        # 🌟修正：馬連の確率を引数として渡す
+        p_wide   = wide_prob(p1_top3, p2_top3, p_umaren)
+        
         base = {"no1": no1, "no2": no2, "name1": name1, "name2": name2, "mark1": mark1, "mark2": mark2, "numbers": f"{no1}-{no2}"}
 
         rows.append({**base, "bet_type": "馬連",  "prob": round(p_umaren * 100, 2)})
