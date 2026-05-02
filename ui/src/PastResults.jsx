@@ -3,7 +3,7 @@
  * ui/src/PastResults.jsx として保存する
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 
 // ============================================================
 // 🌟公開データ ＋ ローカルデータ 統合ストレージ
@@ -11,7 +11,6 @@ import { useState, useEffect, useCallback } from "react";
 const STORAGE_PREFIX = "past_results:";
 let publicCache = null;
 
-// サーバー上に公開された過去のデータを取得する
 async function fetchPublicData() {
   if (publicCache) return publicCache;
   try {
@@ -24,7 +23,6 @@ async function fetchPublicData() {
   return {};
 }
 
-// 日付データを読み込む（自分の入力があれば優先、なければ公開データ）
 async function loadDay(dateStr) {
   const local = window.localStorage.getItem(`${STORAGE_PREFIX}${dateStr}`);
   if (local) return JSON.parse(local);
@@ -33,7 +31,6 @@ async function loadDay(dateStr) {
   return null;
 }
 
-// 自分の入力（ローカル）に保存する
 async function saveDay(dateStr, data) {
   try {
     window.localStorage.setItem(`${STORAGE_PREFIX}${dateStr}`, JSON.stringify(data));
@@ -41,7 +38,6 @@ async function saveDay(dateStr, data) {
   } catch { return false; }
 }
 
-// 記録がある全日付のリストを取得
 async function listAllKeys() {
   const keys = new Set();
   for (let i = 0; i < window.localStorage.length; i++) {
@@ -53,7 +49,6 @@ async function listAllKeys() {
   return Array.from(keys).sort().reverse();
 }
 
-// 🌟公開用データをダウンロードする機能
 async function exportPublicJson() {
   const pub = await fetchPublicData() || {};
   const exportData = { ...pub };
@@ -76,24 +71,53 @@ async function exportPublicJson() {
 }
 
 // ============================================================
-// 定数・ヘルパー
+// 定数・ヘルパー・フォーマット
 // ============================================================
-const MARK_BG    = { "◎": "#EF4444", "○": "#3B82F6", "▲": "#F59E0B", "△": "#22C55E" };
+const MARK_BG = { "◎": "#EF4444", "○": "#3B82F6", "▲": "#F59E0B", "△": "#22C55E" };
 const GATE_BG = ["","#FFFFFF","#111111","#EF4444","#3B82F6","#F59E0B","#22C55E","#F97316","#EC4899"];
 const GATE_FG = ["","#111111","#FFFFFF","#FFFFFF","#FFFFFF","#111111","#FFFFFF","#FFFFFF","#FFFFFF"];
 
+// 🌟 開催場マッピング＆強制日本語化関数
+const VENUE_MAP = {
+  "SAPPORO": "札幌", "HAKODATE": "函館", "FUKUSHIMA": "福島", "NIIGATA": "新潟",
+  "TOKYO": "東京", "NAKAYAMA": "中山", "CHUKYO": "中京", "KYOTO": "京都",
+  "HANSHIN": "阪神", "KOKURA": "小倉"
+};
+
+function formatRaceLabel(labelOrId) {
+  if (!labelOrId) return "";
+  let res = labelOrId;
+  const match = res.match(/_([A-Za-z]+)_0*(\d+)/);
+  if (match) {
+    const vName = VENUE_MAP[match[1].toUpperCase()] || match[1];
+    res = `${vName}${match[2]}R`;
+  }
+  for (const [en, jp] of Object.entries(VENUE_MAP)) {
+    res = res.replace(new RegExp(en, "ig"), jp);
+  }
+  return res.replace(/_/g, " ");
+}
+
 function fmt(d) { 
+  if (!d) return "";
   const date = new Date(d);
   const days = ["日","月","火","水","木","金","土"];
   return `${date.getMonth()+1}/${date.getDate()}(${days[date.getDay()]})`;
 }
 
 function monthLabel(ym) {
+  if (!ym) return "";
   return `${parseInt(ym.split("-")[1])}月`;
 }
 
+// 🌟 的中レース情報を保存できるように initStats を拡張
 function initStats() {
-  return { validRaces:0, tsHit:0, tsBet:0, tsRet:0, umHit:0, umBet:0, umRet:0, wdHit:0, wdBet:0, wdRet:0 };
+  return { 
+    validRaces:0, 
+    tsHit:0, tsBet:0, tsRet:0, tsList: [],
+    umHit:0, umBet:0, umRet:0, umList: [],
+    wdHit:0, wdBet:0, wdRet:0, wdList: []
+  };
 }
 
 function updateStats(st, r) {
@@ -105,18 +129,27 @@ function updateStats(st, r) {
   const winS = [...r.horses].sort((a,b)=>(b.win_prob||fallback(b)) - (a.win_prob||fallback(a)));
   const t3S = [...r.horses].sort((a,b)=>(b.top3_prob||fallback(b)) - (a.top3_prob||fallback(a)));
 
+  const raceName = formatRaceLabel(r.race_label);
+  const rawDate = r.dateStr || "";
+  const displayDate = fmt(rawDate);
+
   st.tsBet += 100;
-  if (winS[0]?.rank === 1) { st.tsHit++; st.tsRet += p_ts; }
+  if (winS[0]?.rank === 1) { 
+    st.tsHit++; st.tsRet += p_ts; 
+    st.tsList.push({ rawDate, date: displayDate, race: raceName, type: "単勝", ret: p_ts, horse: winS[0].name });
+  }
 
   st.umBet += 100;
   const u1=winS[0], u2=winS[1];
-  if (u1?.rank>0 && u2?.rank>0 && u1.rank<=2 && u2.rank<=2) { st.umHit++; st.umRet += p_um; }
+  if (u1?.rank>0 && u2?.rank>0 && u1.rank<=2 && u2.rank<=2) { 
+    st.umHit++; st.umRet += p_um; 
+    st.umList.push({ rawDate, date: displayDate, race: raceName, type: "馬連", ret: p_um, horse: `${u1.name} - ${u2.name}` });
+  }
 
   st.wdBet += 100;
   const w1h=t3S[0], w2h=t3S[1];
   if (w1h?.rank>0 && w2h?.rank>0 && w1h.rank<=3 && w2h.rank<=3) { 
     st.wdHit++;
-    
     const hitPair = [w1h.no, w2h.no].sort((a,b)=>a-b).join("-");
     const ranked = [...r.horses].filter(h=>h.rank>0).sort((a,b)=>a.rank-b.rank);
     const r1 = ranked[0], r2 = ranked[1], r3 = ranked[2];
@@ -131,6 +164,7 @@ function updateStats(st, r) {
     else if (hitPair === pair23) p_wd = Number(r.payouts?.wide3 || 0);
     
     st.wdRet += p_wd; 
+    st.wdList.push({ rawDate, date: displayDate, race: raceName, type: "ワイド", ret: p_wd, horse: `${w1h.name} - ${w2h.name}` });
   }
 }
 
@@ -146,6 +180,9 @@ function calcSimStats(races) {
   return res;
 }
 
+// ============================================================
+// UIコンポーネント群
+// ============================================================
 function GateBall({ gate, no, size=26 }) {
   const bg=GATE_BG[gate]??"#6B7280", fg=GATE_FG[gate]??"#FFF";
   return <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",
@@ -181,6 +218,43 @@ function AmountInput({ label, value, onChange }) {
   );
 }
 
+// 🌟 的中履歴ポップアップ
+function HitHistoryModal({ stats, onClose }) {
+  const hits = [...stats.tsList, ...stats.umList, ...stats.wdList];
+  hits.sort((a,b) => b.rawDate.localeCompare(a.rawDate) || b.ret - a.ret);
+
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,.7)",display:"flex",flexDirection:"column",justifyContent:"center", padding:16}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:"#1E293B",borderRadius:16,maxHeight:"85vh",display:"flex",flexDirection:"column", overflow:"hidden", border:"1px solid #334155"}}>
+        <div style={{padding:"16px", borderBottom:"1px solid #334155", display:"flex", justifyContent:"space-between", alignItems:"center", background:"#0F172A"}}>
+           <span style={{color:"#FFF", fontWeight:"bold", fontSize:16}}>🎯 的中レース一覧</span>
+           <button onClick={onClose} style={{background:"none",border:"none",color:"#94A3B8",fontSize:26,cursor:"pointer",lineHeight:1}}>×</button>
+        </div>
+        <div style={{flex:1, overflowY:"auto", padding:"16px", background:"#0F172A"}}>
+           {hits.length === 0 ? <div style={{textAlign:"center", color:"#64748B", padding:24, fontSize:13}}>的中履歴がありません</div> :
+              hits.map((h, i) => (
+                <div key={i} style={{background:"#1E293B", padding:"12px 14px", borderRadius:10, marginBottom:10, border:"1px solid #334155"}}>
+                   <div style={{display:"flex", justifyContent:"space-between", marginBottom:8, alignItems:"center"}}>
+                      <span style={{color:"#94A3B8", fontSize:12, fontWeight:600}}>{h.date} - {h.race}</span>
+                      <span style={{
+                        background: h.type==="単勝"?"rgba(245,158,11,0.15)":h.type==="馬連"?"rgba(139,92,246,0.15)":"rgba(59,130,246,0.15)",
+                        color: h.type==="単勝"?"#F59E0B":h.type==="馬連"?"#C084FC":"#60A5FA",
+                        padding:"3px 8px", borderRadius:6, fontSize:11, fontWeight:"bold"
+                      }}>{h.type}</span>
+                   </div>
+                   <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-end"}}>
+                      <span style={{color:"#F1F5F9", fontSize:15, fontWeight:"bold"}}>{h.horse}</span>
+                      <span style={{color:"#F59E0B", fontSize:20, fontWeight:900, letterSpacing:"-0.5px"}}>{h.ret} <span style={{fontSize:12}}>円</span></span>
+                   </div>
+                </div>
+              ))
+           }
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RankTableRow({ label, st, isTotal=false }) {
   if (!st || st.validRaces === 0) return null;
   const tsH = st.tsBet > 0 ? Math.round((st.tsHit/(st.tsBet/100))*100) : 0;
@@ -191,7 +265,7 @@ function RankTableRow({ label, st, isTotal=false }) {
   const umR = st.umBet > 0 ? Math.round((st.umRet/st.umBet)*100) : 0;
   const wdR = st.wdBet > 0 ? Math.round((st.wdRet/st.wdBet)*100) : 0;
   
-  const fmt = (h, r) => (
+  const fmtStr = (h, r) => (
       <div style={{display:"flex", flexDirection:"column", alignItems:"center"}}>
           <span style={{color:r>=100?"#F59E0B":"#F1F5F9", fontSize:14, fontWeight:800}}>{r}%</span>
           <span style={{color:"#64748B", fontSize:9, marginTop:1}}>{h}%的中</span>
@@ -202,20 +276,21 @@ function RankTableRow({ label, st, isTotal=false }) {
       <div style={{display:"flex", borderBottom:"1px solid #334155", padding:"8px 0", alignItems:"center", background:isTotal?"rgba(59,130,246,.1)":"transparent"}}>
           <div style={{width:36, color:isTotal?"#60A5FA":"#E2E8F0", fontWeight:800, fontSize:13, textAlign:"center"}}>{label}</div>
           <div style={{width:36, color:"#94A3B8", fontSize:11, textAlign:"center", fontWeight:600}}>{st.validRaces}R</div>
-          <div style={{flex:1}}>{fmt(tsH, tsR)}</div>
-          <div style={{flex:1}}>{fmt(umH, umR)}</div>
-          <div style={{flex:1}}>{fmt(wdH, wdR)}</div>
+          <div style={{flex:1}}>{fmtStr(tsH, tsR)}</div>
+          <div style={{flex:1}}>{fmtStr(umH, umR)}</div>
+          <div style={{flex:1}}>{fmtStr(wdH, wdR)}</div>
       </div>
   );
 }
 
-function StatsPanel({ statsObj, title }) {
+function StatsPanel({ statsObj, title, onClick }) {
   const st = statsObj.ALL;
   if (!st || st.validRaces === 0) return null;
   return (
-    <div style={{margin:"12px 12px 4px", padding:"14px", background:"#1E293B", borderRadius:12, border:"1px solid #334155"}}>
-      <div style={{color:"#F1F5F9", fontSize:13, fontWeight:800, marginBottom:10, display:"flex", alignItems:"center", gap:6}}>
-        <span>🤖</span> {title}
+    <div onClick={onClick} style={{margin:"12px 12px 4px", padding:"14px", background:"#1E293B", borderRadius:12, border:"1px solid #334155", cursor:onClick?"pointer":"default", transition:"all .2s"}} onMouseEnter={e=>onClick&&(e.currentTarget.style.borderColor="#3B82F6")} onMouseLeave={e=>onClick&&(e.currentTarget.style.borderColor="#334155")}>
+      <div style={{color:"#F1F5F9", fontSize:13, fontWeight:800, marginBottom:10, display:"flex", alignItems:"center", justifyContent:"space-between"}}>
+        <div style={{display:"flex", alignItems:"center", gap:6}}><span>🤖</span> {title}</div>
+        {onClick && <span style={{color:"#60A5FA", fontSize:11, fontWeight:"bold", background:"rgba(59,130,246,0.15)", padding:"3px 10px", borderRadius:12}}>タップで的中履歴 ›</span>}
       </div>
       
       <div style={{background:"#0F172A", borderRadius:8, padding:"8px 12px", border:"1px solid #334155"}}>
@@ -233,6 +308,9 @@ function StatsPanel({ statsObj, title }) {
   );
 }
 
+// ============================================================
+// 入力モーダル
+// ============================================================
 function EntryModal({ date, raceData, existing, onSave, onClose }) {
   const [races, setRaces] = useState(() => {
     if (existing?.races) {
@@ -241,7 +319,7 @@ function EntryModal({ date, raceData, existing, onSave, onClose }) {
       }));
     }
     if (raceData?.length) return raceData.map(r => ({
-      race_id: r.race_id, race_label: r.label ?? r.race_id, confidence_rank: r.confidence_rank ?? "C",
+      race_id: r.race_id, race_label: formatRaceLabel(r.label ?? r.race_id), confidence_rank: r.confidence_rank ?? "C",
       horses: r.horses.map(h => ({
         no: h.no, gate: h.gate, name: h.name, mark: h.mark, rank: 0,
         win_prob: h.win_prob, top3_prob: h.top3_prob 
@@ -298,7 +376,7 @@ function EntryModal({ date, raceData, existing, onSave, onClose }) {
                     flexShrink:0,padding:"5px 10px",borderRadius:6,border:"1px solid #334155",cursor:"pointer",fontSize:11,fontWeight:600,
                     background:activeRace===i?"#3B82F6":"transparent",color:activeRace===i?"#FFF":"#94A3B8",position:"relative"
                   }}>
-                    {r.race_label.replace(/東京|京都|阪神|中京|福島|新潟|小倉|中山/g,"")}
+                    {formatRaceLabel(r.race_label).replace(/東京|京都|阪神|中京|福島|新潟|小倉|中山/g,"")}
                     {filled > 0 && <span style={{position:"absolute",top:-4,right:-4,background:filled===r.horses.length?"#22C55E":"#F59E0B",color:"#000",borderRadius:8,padding:"0 4px",fontSize:9,fontWeight:800}}>{filled}/{r.horses.length}</span>}
                   </button>
                 );
@@ -310,7 +388,7 @@ function EntryModal({ date, raceData, existing, onSave, onClose }) {
         <div style={{flex:1,overflowY:"auto",padding:"0 16px"}}>
           {!cur ? <div style={{color:"#64748B",textAlign:"center",padding:32,fontSize:13}}>レースデータなし</div> : (
             <div style={{paddingBottom:20}}>
-              <p style={{color:"#64748B",fontSize:11,margin:"8px 0 12px"}}>{cur.race_label} — 着順入力（0=除外）</p>
+              <p style={{color:"#64748B",fontSize:11,margin:"8px 0 12px"}}>{formatRaceLabel(cur.race_label)} — 着順入力（0=除外）</p>
               {cur.horses.sort((a,b)=>{
                   const mo={"◎":0,"○":1,"▲":2,"△":3};
                   return (mo[a.mark]??9) - (mo[b.mark]??9) || a.no-b.no;
@@ -354,10 +432,17 @@ function EntryModal({ date, raceData, existing, onSave, onClose }) {
   );
 }
 
+// ============================================================
+// メイン画面群
+// ============================================================
 function DayResultView({ dateStr, raceList, onEdit, onBack }) {
   const [dayData, setDayData] = useState(null);
+  const [hitModal, setHitModal] = useState(null);
+
   useEffect(() => { loadDay(dateStr).then(d => { setDayData(d); }); }, [dateStr]);
   const races = dayData?.races ?? [];
+  races.forEach(r => r.dateStr = dateStr);
+  const simStats = useMemo(() => calcSimStats(races), [races]);
 
   return (
     <div style={{background:"#0F172A",minHeight:"100vh"}}>
@@ -375,11 +460,11 @@ function DayResultView({ dateStr, raceList, onEdit, onBack }) {
         </div>
       ) : (
         <div style={{padding:"0 0 40px"}}>
-          <StatsPanel statsObj={calcSimStats(races)} title="本日のAI推奨 マトリクス分析" />
+          <StatsPanel statsObj={simStats} title="本日のAI推奨 マトリクス分析" onClick={() => setHitModal(simStats.ALL)} />
 
           {races.map((race, ri) => (
             <div key={ri} style={{margin:"10px 12px 0",background:"#1E293B",borderRadius:12,border:"1px solid #334155",overflow:"hidden"}}>
-              <div style={{padding:"10px 14px",background:"#0F172A",borderBottom:"1px solid #1E293B"}}><span style={{color:"#F1F5F9",fontWeight:700,fontSize:14}}>{race.race_label}</span></div>
+              <div style={{padding:"10px 14px",background:"#0F172A",borderBottom:"1px solid #1E293B"}}><span style={{color:"#F1F5F9",fontWeight:700,fontSize:14}}>{formatRaceLabel(race.race_label)}</span></div>
               {race.horses.filter(h=>h.rank>0).sort((a,b)=>a.rank-b.rank).map((h)=>(
                 <div key={h.no} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px",borderBottom:"1px solid #1E293B",background:h.rank<=3?"rgba(59,130,246,.04)":"transparent"}}>
                   <span style={{width:30,textAlign:"center",flexShrink:0,color:h.rank===1?"#F59E0B":h.rank===2?"#94A3B8":h.rank===3?"#CD7F32":"#475569",fontWeight:800,fontSize:h.rank<=3?15:13}}>{h.rank}着</span>
@@ -392,6 +477,7 @@ function DayResultView({ dateStr, raceList, onEdit, onBack }) {
           ))}
         </div>
       )}
+      {hitModal && <HitHistoryModal stats={hitModal} onClose={() => setHitModal(null)} />}
     </div>
   );
 }
@@ -431,6 +517,7 @@ function MonthView({ ym, allKeys, raceList, onSelectDate }) {
 
 function MonthSummary({ ym }) {
   const [stats, setStats] = useState(null);
+  const [hitModal, setHitModal] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -439,14 +526,22 @@ function MonthSummary({ ym }) {
       let allRaces = [];
       for (const k of monthKeys) {
         const d = await loadDay(k);
-        if (d?.races) allRaces = allRaces.concat(d.races);
+        if (d?.races) {
+            d.races.forEach(r => r.dateStr = k);
+            allRaces = allRaces.concat(d.races);
+        }
       }
       setStats(calcSimStats(allRaces));
     })();
   }, [ym]);
 
   if (!stats || stats.ALL.validRaces === 0) return null;
-  return <StatsPanel statsObj={stats} title={`${monthLabel(ym)} AI累計シミュレーション（全${stats.ALL.validRaces}R）`} />;
+  return (
+    <>
+      <StatsPanel statsObj={stats} title={`${monthLabel(ym)} AI累計シミュレーション（全${stats.ALL.validRaces}R）`} onClick={() => setHitModal(stats.ALL)} />
+      {hitModal && <HitHistoryModal stats={hitModal} onClose={() => setHitModal(null)} />}
+    </>
+  );
 }
 
 export default function PastResults({ raceList }) {
