@@ -6,17 +6,34 @@
 import { useState, useEffect, useCallback } from "react";
 
 // ============================================================
-// ストレージ操作 (localStorage)
+// 🌟公開データ ＋ ローカルデータ 統合ストレージ
 // ============================================================
 const STORAGE_PREFIX = "past_results:";
+let publicCache = null;
 
-async function loadDay(dateStr) {
+// サーバー上に公開された過去のデータを取得する
+async function fetchPublicData() {
+  if (publicCache) return publicCache;
   try {
-    const r = window.localStorage.getItem(`${STORAGE_PREFIX}${dateStr}`);
-    return r ? JSON.parse(r) : null;
-  } catch { return null; }
+    const res = await fetch(`/data/public_results.json?_=${Date.now()}`);
+    if (res.ok) {
+      publicCache = await res.json();
+      return publicCache;
+    }
+  } catch {}
+  return {};
 }
 
+// 日付データを読み込む（自分の入力があれば優先、なければ公開データ）
+async function loadDay(dateStr) {
+  const local = window.localStorage.getItem(`${STORAGE_PREFIX}${dateStr}`);
+  if (local) return JSON.parse(local);
+  const pub = await fetchPublicData();
+  if (pub && pub[dateStr]) return pub[dateStr];
+  return null;
+}
+
+// 自分の入力（ローカル）に保存する
 async function saveDay(dateStr, data) {
   try {
     window.localStorage.setItem(`${STORAGE_PREFIX}${dateStr}`, JSON.stringify(data));
@@ -24,17 +41,38 @@ async function saveDay(dateStr, data) {
   } catch { return false; }
 }
 
+// 記録がある全日付のリストを取得
 async function listAllKeys() {
-  try {
-    const keys = [];
-    for (let i = 0; i < window.localStorage.length; i++) {
-      const k = window.localStorage.key(i);
-      if (k && k.startsWith(STORAGE_PREFIX)) {
-        keys.push(k.replace(STORAGE_PREFIX, ""));
-      }
+  const keys = new Set();
+  for (let i = 0; i < window.localStorage.length; i++) {
+    const k = window.localStorage.key(i);
+    if (k && k.startsWith(STORAGE_PREFIX)) keys.add(k.replace(STORAGE_PREFIX, ""));
+  }
+  const pub = await fetchPublicData();
+  if (pub) Object.keys(pub).forEach(k => keys.add(k));
+  return Array.from(keys).sort().reverse();
+}
+
+// 🌟公開用データをダウンロードする機能
+async function exportPublicJson() {
+  const pub = await fetchPublicData() || {};
+  const exportData = { ...pub };
+  
+  for (let i = 0; i < window.localStorage.length; i++) {
+    const k = window.localStorage.key(i);
+    if (k && k.startsWith(STORAGE_PREFIX)) {
+      const dateStr = k.replace(STORAGE_PREFIX, "");
+      exportData[dateStr] = JSON.parse(window.localStorage.getItem(k));
     }
-    return keys.sort().reverse();
-  } catch { return []; }
+  }
+
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "public_results.json";
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ============================================================
@@ -54,7 +92,6 @@ function monthLabel(ym) {
   return `${parseInt(ym.split("-")[1])}月`;
 }
 
-// 🌟シミュレーション計算ロジック（ワイドの当たり目判定を正確に）
 function initStats() {
   return { validRaces:0, tsHit:0, tsBet:0, tsRet:0, umHit:0, umBet:0, umRet:0, wdHit:0, wdBet:0, wdRet:0 };
 }
@@ -75,7 +112,6 @@ function updateStats(st, r) {
   const u1=winS[0], u2=winS[1];
   if (u1?.rank>0 && u2?.rank>0 && u1.rank<=2 && u2.rank<=2) { st.umHit++; st.umRet += p_um; }
 
-  // ワイドの判定（AI推奨馬が実際のどの当たりペアに該当するかで配当を選ぶ）
   st.wdBet += 100;
   const w1h=t3S[0], w2h=t3S[1];
   if (w1h?.rank>0 && w2h?.rank>0 && w1h.rank<=3 && w2h.rank<=3) { 
@@ -110,9 +146,6 @@ function calcSimStats(races) {
   return res;
 }
 
-// ============================================================
-// UIコンポーネント
-// ============================================================
 function GateBall({ gate, no, size=26 }) {
   const bg=GATE_BG[gate]??"#6B7280", fg=GATE_FG[gate]??"#FFF";
   return <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",
@@ -200,9 +233,6 @@ function StatsPanel({ statsObj, title }) {
   );
 }
 
-// ============================================================
-// モーダル・ビュー類
-// ============================================================
 function EntryModal({ date, raceData, existing, onSave, onClose }) {
   const [races, setRaces] = useState(() => {
     if (existing?.races) {
@@ -241,7 +271,6 @@ function EntryModal({ date, raceData, existing, onSave, onClose }) {
 
   const cur = races[activeRace];
 
-  // 着順からワイドの組み合わせを自動計算
   const ranked = cur ? [...cur.horses].filter(h=>h.rank>0).sort((a,b)=>a.rank-b.rank) : [];
   const r1 = ranked[0], r2 = ranked[1], r3 = ranked[2];
   const w12 = r1&&r2 ? `${r1.no}-${r2.no}` : "1着-2着";
@@ -468,7 +497,10 @@ export default function PastResults({ raceList }) {
         <div style={{padding:"12px 14px 0"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
             <span style={{color:"#F1F5F9",fontWeight:800,fontSize:17}}>過去レース結果</span>
-            <button onClick={() => openEntry(new Date().toISOString().slice(0,10))} style={{padding:"6px 14px",background:"#3B82F6",border:"none",borderRadius:8,color:"#FFF",fontSize:12,fontWeight:700,cursor:"pointer"}}>＋ 今日の結果を入力</button>
+            <div>
+              <button onClick={() => openEntry(new Date().toISOString().slice(0,10))} style={{padding:"6px 12px",background:"#3B82F6",border:"none",borderRadius:8,color:"#FFF",fontSize:12,fontWeight:700,cursor:"pointer"}}>＋ 入力</button>
+              <button onClick={exportPublicJson} style={{padding:"6px 12px",background:"#10B981",border:"none",borderRadius:8,color:"#FFF",fontSize:12,fontWeight:700,cursor:"pointer", marginLeft:8}}>📥 公開</button>
+            </div>
           </div>
           <div style={{display:"flex",gap:4,overflowX:"auto",paddingBottom:8}}>
             {ymList.map(ym => (

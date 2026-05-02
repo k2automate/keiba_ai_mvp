@@ -1,9 +1,8 @@
 /**
- * App.jsx — 競馬AI 予測UI（EV ランキングタブ統合版）
+ * App.jsx — 競馬AI 予測UI（EV ランキング・過去結果統合版）
  */
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-// ⚠️ 注意：この行があるため、ui/src/PastResults.jsx というファイルが別途必要です！
 import PastResults from "./PastResults";
 
 const DATA_BASE    = "/data";
@@ -12,6 +11,13 @@ const LIST_CSV     = `${DATA_BASE}/race_list_view.csv`;
 const BETS_CSV     = `${DATA_BASE}/final_multi_bets.csv`;
 const COMMENTS_CSV = `${DATA_BASE}/horse_comments.csv`;
 const EV_CSV       = `${DATA_BASE}/combination_ev_ranking.csv`;
+
+// 🌟 開催場マッピング（ローマ字を日本語に変換）
+const VENUE_MAP = {
+  "SAPPORO": "札幌", "HAKODATE": "函館", "FUKUSHIMA": "福島", "NIIGATA": "新潟",
+  "TOKYO": "東京", "NAKAYAMA": "中山", "CHUKYO": "中京", "KYOTO": "京都",
+  "HANSHIN": "阪神", "KOKURA": "小倉"
+};
 
 function parseCSV(text) {
   const s = text.replace(/^\uFEFF/, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -56,7 +62,11 @@ function buildRaces(detailRows, listRows) {
     const h = rowToHorse(row), rid = h.race_id; if (!rid) continue;
     if (!raceMap[rid]) {
       const m = listMap[rid] ?? {};
-      raceMap[rid] = { race_id: rid, venue: m["開催"] ?? "", race_no: m["レース番号"] ?? rid,
+      // 🌟 ローマ字を日本語に変換してセット
+      const rawVenue = m["開催"] ?? "";
+      const jpVenue = VENUE_MAP[rawVenue.toUpperCase()] || rawVenue;
+
+      raceMap[rid] = { race_id: rid, venue: jpVenue, race_no: m["レース番号"] ?? rid,
       race_name: m["レース名"] ?? "", distance: m["距離"] ? `${m["距離"]}m` : "",
       track_cond: m["馬場状態"] ?? "", field_size: toI(m.field_size ?? 0),
       confidence_rank: m.confidence_rank ?? "C", confidence_label: m.confidence_label ?? "難解", horses: [] };
@@ -69,7 +79,18 @@ function buildRaces(detailRows, listRows) {
     if (r.confidence_rank === "C" && r.horses[0]?.confidence_rank) {
       r.confidence_rank = r.horses[0].confidence_rank; r.confidence_label = r.horses[0].confidence_label;
     }
-    r.label = r.venue && r.race_no ? `${r.venue} ${r.race_no}` : r.race_id;
+    
+    // 🌟 race_idの形式が「2024_TOKYO_01」のような場合も日本語化
+    const match = r.race_id.match(/_([A-Za-z]+)_0*(\d+)/);
+    if (match) {
+       const vName = VENUE_MAP[match[1].toUpperCase()] || match[1];
+       r.race_no = match[2]; 
+       r.label = `${vName}${match[2]}R`;
+       r.venue = vName;
+    } else {
+       r.race_no = r.race_no || "";
+       r.label = r.venue && r.race_no ? `${r.venue}${r.race_no}R` : r.race_id;
+    }
   }
   return Object.values(raceMap);
 }
@@ -93,7 +114,6 @@ A:{bg:"#3B82F6",fg:"#FFFFFF"}, B:{bg:"#6B7280",fg:"#FFFFFF"}, C:{bg:"#374151",fg
 const TAG_DEF  = { good:{bg:"#EF4444",fg:"#FFFFFF"}, bad:{bg:"#3B82F6",fg:"#FFFFFF"}, neutral:{bg:"#334155",fg:"#CBD5E1"} };
 const ROW_HL   = { "◎":"rgba(239,68,68,.10)", "○":"rgba(59,130,246,.10)" };
 const barCol   = s => s>=80?"#F59E0B":s>=60?"#60A5FA":s>=40?"#34D399":"#4B5563";
-const evCol    = e => e>=1.30?"#F59E0B":e>=1.15?"#34D399":e>=1.00?"#94A3B8":"#EF4444";
 
 function GateBall({ gate, no, size=30 }) {
   const bg=GATE_BG[gate]??"#6B7280", fg=GATE_FG[gate]??"#FFF";
@@ -384,7 +404,7 @@ export default function App() {
   const [mainTab,setMainTab]=useState("today");
 
   const loadData=useCallback(async()=>{
-    if (!isAuthenticated) return; // 認証前はロードしない
+    if (!isAuthenticated) return;
     setLoading(true);setHasError(false);
     try {
       const [detailRows,listRows,betRows,commentRows,evRows]=await Promise.all([
@@ -405,7 +425,6 @@ export default function App() {
   const openDetail=useCallback(race=>{setCurrentRace(race);setCurrentView("detail");window.scrollTo(0,0);},[]);
   const closeDetail=useCallback(()=>{setCurrentView("list");setCurrentRace(null);},[]);
 
-  // ログイン処理
   const handleLogin = (e) => {
     e.preventDefault();
     if (passInput === ACCESS_PASSWORD) {
@@ -416,7 +435,6 @@ export default function App() {
     }
   };
 
-  // 🔒 ログイン画面
   if (!isAuthenticated) {
     return (
       <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#0F172A" }}>
@@ -442,7 +460,6 @@ export default function App() {
     );
   }
 
-  // 🚀 メイン画面
   if (currentView==="detail"&&currentRace)
     return <RaceDetail race={currentRace} bets={bets} commentMap={commentMap} evData={evData} onBack={closeDetail}/>;
 
@@ -490,9 +507,7 @@ export default function App() {
           {hasError&&!loading&&<ErrorPanel onRetry={loadData}/>}
           {!loading&&!hasError&&visibleRaces.map(race=><RaceCard key={race.race_id} race={race} onClick={()=>openDetail(race)}/>)}
           {!loading&&!hasError&&!visibleRaces.length&&(
-            <div style={{color:"#64748B",textAlign:"center",padding:48,fontSize:13}}>
-              表示するレースがありません
-            </div>
+            <div style={{color:"#64748B",textAlign:"center",padding:48,fontSize:13}}>表示するレースがありません</div>
           )}
         </div>
       )}
@@ -517,9 +532,7 @@ export default function App() {
           display:"flex",flexDirection:"column",alignItems:"center",gap:3,
         }}>
           <span style={{fontSize:20,lineHeight:1}}>{t.icon}</span>
-          <span style={{fontSize:10,fontWeight:600,color:mainTab===t.id?"#3B82F6":"#475569"}}>
-            {t.label}
-          </span>
+          <span style={{fontSize:10,fontWeight:600,color:mainTab===t.id?"#3B82F6":"#475569"}}>{t.label}</span>
           {mainTab===t.id&&<div style={{width:20,height:2,background:"#3B82F6",borderRadius:1}}/>}
         </button>
       ))}
