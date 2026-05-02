@@ -54,47 +54,49 @@ function monthLabel(ym) {
   return `${parseInt(ym.split("-")[1])}月`;
 }
 
-// 🌟シミュレーション計算ロジック（的中率・回収率）
+// 🌟シミュレーション計算ロジック（ランク別・ワイド3点対応）
+function initStats() {
+  return { validRaces:0, tsHit:0, tsBet:0, tsRet:0, umHit:0, umBet:0, umRet:0, wdHit:0, wdBet:0, wdRet:0 };
+}
+
+function updateStats(st, r) {
+  st.validRaces++;
+  const p_ts = Number(r.payouts?.tansho || 0);
+  const p_um = Number(r.payouts?.umaren || 0);
+  
+  // ワイドは入力された配当の平均額を適用
+  const w1 = Number(r.payouts?.wide1 || 0);
+  const w2 = Number(r.payouts?.wide2 || 0);
+  const w3 = Number(r.payouts?.wide3 || 0);
+  const w_arr = [w1, w2, w3].filter(v => v > 0);
+  const p_wd = w_arr.length > 0 ? Math.round(w_arr.reduce((a,b)=>a+b, 0) / w_arr.length) : 0;
+
+  const fallback = h => h.mark==="◎"?100:h.mark==="○"?90:h.mark==="▲"?80:h.mark==="△"?70:0;
+  const winS = [...r.horses].sort((a,b)=>(b.win_prob||fallback(b)) - (a.win_prob||fallback(a)));
+  const t3S = [...r.horses].sort((a,b)=>(b.top3_prob||fallback(b)) - (a.top3_prob||fallback(a)));
+
+  st.tsBet += 100;
+  if (winS[0]?.rank === 1) { st.tsHit++; st.tsRet += p_ts; }
+
+  st.umBet += 100;
+  const u1=winS[0], u2=winS[1];
+  if (u1?.rank>0 && u2?.rank>0 && u1.rank<=2 && u2.rank<=2) { st.umHit++; st.umRet += p_um; }
+
+  st.wdBet += 100;
+  const w1h=t3S[0], w2h=t3S[1];
+  if (w1h?.rank>0 && w2h?.rank>0 && w1h.rank<=3 && w2h.rank<=3) { st.wdHit++; st.wdRet += p_wd; }
+}
+
 function calcSimStats(races) {
-  let tsHit=0, tsBet=0, tsRet=0;
-  let umHit=0, umBet=0, umRet=0;
-  let wdHit=0, wdBet=0, wdRet=0;
-  let myBet=0, myRet=0;
-  let validRaces=0;
-
+  const res = { ALL: initStats(), SS: initStats(), S: initStats(), A: initStats(), B: initStats(), C: initStats() };
   races.forEach(r => {
-    const filled = r.horses.filter(h=>h.rank>0);
-    if (filled.length < 3) return; // 着順が未入力のレースはスキップ
-    validRaces++;
-
-    myBet += Number(r.myBet || 0);
-    myRet += Number(r.myReturn || 0);
-
-    const p_ts = Number(r.payouts?.tansho || 0);
-    const p_um = Number(r.payouts?.umaren || 0);
-    const p_wd = Number(r.payouts?.wide || 0);
-
-    // 古いデータへの後方互換性（確率がない場合は印をスコア化）
-    const fallback = h => h.mark==="◎"?100:h.mark==="○"?90:h.mark==="▲"?80:h.mark==="△"?70:0;
-    const winS = [...r.horses].sort((a,b)=>(b.win_prob||fallback(b)) - (a.win_prob||fallback(a)));
-    const t3S = [...r.horses].sort((a,b)=>(b.top3_prob||fallback(b)) - (a.top3_prob||fallback(a)));
-
-    // ① 単勝シミュレーション（勝率1位）
-    tsBet += 100;
-    if (winS[0]?.rank === 1) { tsHit++; tsRet += p_ts; }
-
-    // ② 馬連シミュレーション（勝率1位・2位の組み合わせ）
-    umBet += 100;
-    const u1=winS[0], u2=winS[1];
-    if (u1?.rank>0 && u2?.rank>0 && u1.rank<=2 && u2.rank<=2) { umHit++; umRet += p_um; }
-
-    // ③ ワイドシミュレーション（複勝率1位・2位の組み合わせ）
-    wdBet += 100;
-    const w1=t3S[0], w2=t3S[1];
-    if (w1?.rank>0 && w2?.rank>0 && w1.rank<=3 && w2.rank<=3) { wdHit++; wdRet += p_wd; }
+      const filled = r.horses.filter(h=>h.rank>0);
+      if (filled.length < 3) return;
+      const rank = r.confidence_rank || "C";
+      updateStats(res.ALL, r);
+      if (res[rank]) updateStats(res[rank], r);
   });
-
-  return { validRaces, tsHit, tsBet, tsRet, umHit, umBet, umRet, wdHit, wdBet, wdRet, myBet, myRet };
+  return res;
 }
 
 // ============================================================
@@ -127,59 +129,63 @@ function RankInput({ value, onChange }) {
 function AmountInput({ label, value, onChange }) {
   return (
     <div style={{display:"flex", alignItems:"center", gap:6}}>
-      <span style={{color:"#94A3B8", fontSize:11, width:36, flexShrink:0}}>{label}</span>
+      <span style={{color:"#94A3B8", fontSize:11, width:40, flexShrink:0, textAlign:"right"}}>{label}</span>
       <input type="number" value={value} onChange={e=>onChange(e.target.value)} placeholder="0"
         style={{flex:1, height:30, borderRadius:6, border:"1px solid #334155", background:"#1E293B", 
         color:"#FFF", fontSize:13, padding:"0 8px", outline:"none"}} />
-      <span style={{color:"#64748B", fontSize:11}}>円</span>
     </div>
   );
 }
 
-function SimBox({ label, hit, bet, ret }) {
-  const rr = bet > 0 ? Math.round((ret / bet) * 100) : 0;
-  const hitRate = bet > 0 ? Math.round((hit / (bet/100)) * 100) : 0;
+// 🌟マトリクス表の1行
+function RankTableRow({ label, st, isTotal=false }) {
+  if (!st || st.validRaces === 0) return null;
+  const tsH = st.tsBet > 0 ? Math.round((st.tsHit/(st.tsBet/100))*100) : 0;
+  const umH = st.umBet > 0 ? Math.round((st.umHit/(st.umBet/100))*100) : 0;
+  const wdH = st.wdBet > 0 ? Math.round((st.wdHit/(st.wdBet/100))*100) : 0;
+
+  const tsR = st.tsBet > 0 ? Math.round((st.tsRet/st.tsBet)*100) : 0;
+  const umR = st.umBet > 0 ? Math.round((st.umRet/st.umBet)*100) : 0;
+  const wdR = st.wdBet > 0 ? Math.round((st.wdRet/st.wdBet)*100) : 0;
+  
+  const fmt = (h, r) => (
+      <div style={{display:"flex", flexDirection:"column", alignItems:"center"}}>
+          <span style={{color:r>=100?"#F59E0B":"#F1F5F9", fontSize:14, fontWeight:800}}>{r}%</span>
+          <span style={{color:"#64748B", fontSize:9, marginTop:1}}>{h}%的中</span>
+      </div>
+  );
+
   return (
-    <div style={{flex:1, background:"rgba(15,23,42,.4)", borderRadius:8, padding:"8px", border:`1px solid ${hit>0?"#3B82F6":"rgba(51,65,85,.5)"}`}}>
-      <div style={{color:"#94A3B8", fontSize:10, marginBottom:4, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>{label}</div>
-      <div style={{display:"flex", alignItems:"baseline", gap:4}}>
-         <span style={{color:hit>0?"#60A5FA":"#E2E8F0", fontSize:15, fontWeight:800}}>{hit}/{bet/100}</span>
-         <span style={{color:"#64748B", fontSize:10}}>({hitRate}%)</span>
+      <div style={{display:"flex", borderBottom:"1px solid #334155", padding:"8px 0", alignItems:"center", background:isTotal?"rgba(59,130,246,.1)":"transparent"}}>
+          <div style={{width:36, color:isTotal?"#60A5FA":"#E2E8F0", fontWeight:800, fontSize:13, textAlign:"center"}}>{label}</div>
+          <div style={{width:36, color:"#94A3B8", fontSize:11, textAlign:"center", fontWeight:600}}>{st.validRaces}R</div>
+          <div style={{flex:1}}>{fmt(tsH, tsR)}</div>
+          <div style={{flex:1}}>{fmt(umH, umR)}</div>
+          <div style={{flex:1}}>{fmt(wdH, wdR)}</div>
       </div>
-      <div style={{color:rr>=100?"#F59E0B":rr>0?"#F1F5F9":"#475569", fontSize:13, fontWeight:700, marginTop:2}}>
-         回収 {rr}%
-      </div>
-    </div>
   );
 }
 
-function StatsPanel({ stats, title }) {
-  if (!stats || stats.validRaces === 0) return null;
-  const { tsHit, tsBet, tsRet, umHit, umBet, umRet, wdHit, wdBet, wdRet, myBet, myRet } = stats;
+function StatsPanel({ statsObj, title }) {
+  const st = statsObj.ALL;
+  if (!st || st.validRaces === 0) return null;
   return (
     <div style={{margin:"12px 12px 4px", padding:"14px", background:"#1E293B", borderRadius:12, border:"1px solid #334155"}}>
       <div style={{color:"#F1F5F9", fontSize:13, fontWeight:800, marginBottom:10, display:"flex", alignItems:"center", gap:6}}>
         <span>🤖</span> {title}
       </div>
-      <div style={{display:"flex", gap:6}}>
-        <SimBox label="単勝推奨" hit={tsHit} bet={tsBet} ret={tsRet} />
-        <SimBox label="馬連推奨" hit={umHit} bet={umBet} ret={umRet} />
-        <SimBox label="ワイド推奨" hit={wdHit} bet={wdBet} ret={wdRet} />
-      </div>
-      {myBet > 0 && (
-        <div style={{marginTop:12, paddingTop:12, borderTop:"1px solid #334155"}}>
-          <div style={{color:"#94A3B8", fontSize:11, marginBottom:6}}>👤 ご自身のリアル収支</div>
-          <div style={{display:"flex", alignItems:"center", justifyContent:"space-between", fontSize:13}}>
-            <div style={{display:"flex", gap:16}}>
-              <span style={{color:"#F1F5F9"}}>購入: {myBet}円</span>
-              <span style={{color:"#F59E0B"}}>払戻: {myRet}円</span>
-            </div>
-            <span style={{color:myRet>=myBet?"#F59E0B":"#64748B", fontWeight:800}}>
-              回収率 {Math.round((myRet/myBet)*100)}%
-            </span>
-          </div>
+      
+      <div style={{background:"#0F172A", borderRadius:8, padding:"8px 12px", border:"1px solid #334155"}}>
+        <div style={{display:"flex", borderBottom:"1px solid #334155", paddingBottom:6, marginBottom:4}}>
+            <div style={{width:36, color:"#64748B", fontSize:10, textAlign:"center"}}>ランク</div>
+            <div style={{width:36, color:"#64748B", fontSize:10, textAlign:"center"}}>レース</div>
+            <div style={{flex:1, color:"#64748B", fontSize:10, textAlign:"center"}}>単勝回収</div>
+            <div style={{flex:1, color:"#64748B", fontSize:10, textAlign:"center"}}>馬連回収</div>
+            <div style={{flex:1, color:"#64748B", fontSize:10, textAlign:"center"}}>ﾜｲﾄﾞ回収</div>
         </div>
-      )}
+        <RankTableRow label="全体" st={statsObj.ALL} isTotal={true} />
+        {["SS","S","A","B","C"].map(r => <RankTableRow key={r} label={r} st={statsObj[r]} />)}
+      </div>
     </div>
   );
 }
@@ -191,19 +197,16 @@ function EntryModal({ date, raceData, existing, onSave, onClose }) {
   const [races, setRaces] = useState(() => {
     if (existing?.races) {
       return existing.races.map(r => ({
-        ...r,
-        payouts: r.payouts || {tansho:"", fukusho:"", wide:"", umaren:"", sanrenpuku:"", sanrentan:""},
-        myBet: r.myBet || "", myReturn: r.myReturn || "",
+        ...r, payouts: r.payouts || {tansho:"", wide1:"", wide2:"", wide3:"", umaren:"", sanrenpuku:"", sanrentan:""}
       }));
     }
     if (raceData?.length) return raceData.map(r => ({
-      race_id: r.race_id, race_label: r.label ?? r.race_id,
+      race_id: r.race_id, race_label: r.label ?? r.race_id, confidence_rank: r.confidence_rank ?? "C",
       horses: r.horses.map(h => ({
         no: h.no, gate: h.gate, name: h.name, mark: h.mark, rank: 0,
-        win_prob: h.win_prob, top3_prob: h.top3_prob // シミュ用に確率も保存
+        win_prob: h.win_prob, top3_prob: h.top3_prob 
       })),
-      payouts: {tansho:"", fukusho:"", wide:"", umaren:"", sanrenpuku:"", sanrentan:""},
-      myBet: "", myReturn: ""
+      payouts: {tansho:"", wide1:"", wide2:"", wide3:"", umaren:"", sanrenpuku:"", sanrentan:""}
     }));
     return [];
   });
@@ -222,14 +225,6 @@ function EntryModal({ date, raceData, existing, onSave, onClose }) {
     setRaces(prev => {
       const next = [...prev];
       next[raceIdx].payouts = { ...next[raceIdx].payouts, [key]: val };
-      return next;
-    });
-  };
-
-  const updateMyBalance = (raceIdx, key, val) => {
-    setRaces(prev => {
-      const next = [...prev];
-      next[raceIdx][key] = val;
       return next;
     });
   };
@@ -286,21 +281,18 @@ function EntryModal({ date, raceData, existing, onSave, onClose }) {
                   );
               })}
 
-              {/* 🌟配当・金額入力セクション */}
               <div style={{marginTop:24, padding:"12px", background:"#0F172A", borderRadius:10, border:"1px solid #334155"}}>
                 <div style={{color:"#F1F5F9", fontSize:12, fontWeight:700, marginBottom:10}}>💰 公式配当金（100円換算 / AI回収率計算用）</div>
                 <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
                   <AmountInput label="単勝" value={cur.payouts?.tansho||""} onChange={v=>updatePayout(activeRace, "tansho", v)} />
-                  <AmountInput label="複勝" value={cur.payouts?.fukusho||""} onChange={v=>updatePayout(activeRace, "fukusho", v)} />
                   <AmountInput label="馬連" value={cur.payouts?.umaren||""} onChange={v=>updatePayout(activeRace, "umaren", v)} />
-                  <AmountInput label="ワイド" value={cur.payouts?.wide||""} onChange={v=>updatePayout(activeRace, "wide", v)} />
+                  <AmountInput label="ﾜｲﾄﾞ①" value={cur.payouts?.wide1||""} onChange={v=>updatePayout(activeRace, "wide1", v)} />
+                  <AmountInput label="ﾜｲﾄﾞ②" value={cur.payouts?.wide2||""} onChange={v=>updatePayout(activeRace, "wide2", v)} />
+                  <AmountInput label="ﾜｲﾄﾞ③" value={cur.payouts?.wide3||""} onChange={v=>updatePayout(activeRace, "wide3", v)} />
                   <AmountInput label="3連複" value={cur.payouts?.sanrenpuku||""} onChange={v=>updatePayout(activeRace, "sanrenpuku", v)} />
-                  <AmountInput label="3連単" value={cur.payouts?.sanrentan||""} onChange={v=>updatePayout(activeRace, "sanrentan", v)} />
-                </div>
-                <div style={{color:"#F1F5F9", fontSize:12, fontWeight:700, margin:"20px 0 10px"}}>👤 ご自身のリアル収支（任意）</div>
-                <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
-                  <AmountInput label="購入" value={cur.myBet||""} onChange={v=>updateMyBalance(activeRace, "myBet", v)} />
-                  <AmountInput label="払戻" value={cur.myReturn||""} onChange={v=>updateMyBalance(activeRace, "myReturn", v)} />
+                  <div style={{gridColumn:"span 2"}}>
+                    <AmountInput label="3連単" value={cur.payouts?.sanrentan||""} onChange={v=>updatePayout(activeRace, "sanrentan", v)} />
+                  </div>
                 </div>
               </div>
             </div>
@@ -337,8 +329,7 @@ function DayResultView({ dateStr, raceList, onEdit, onBack }) {
         </div>
       ) : (
         <div style={{padding:"0 0 40px"}}>
-          {/* 🌟本日のAI回収率シミュレーション */}
-          <StatsPanel stats={calcSimStats(races)} title="本日のAI推奨 仮想シミュレーション" />
+          <StatsPanel statsObj={calcSimStats(races)} title="本日のAI推奨 マトリクス分析" />
 
           {races.map((race, ri) => (
             <div key={ri} style={{margin:"10px 12px 0",background:"#1E293B",borderRadius:12,border:"1px solid #334155",overflow:"hidden"}}>
@@ -408,8 +399,8 @@ function MonthSummary({ ym }) {
     })();
   }, [ym]);
 
-  if (!stats || stats.validRaces === 0) return null;
-  return <StatsPanel stats={stats} title={`${monthLabel(ym)} AI累計シミュレーション（${stats.validRaces}R）`} />;
+  if (!stats || stats.ALL.validRaces === 0) return null;
+  return <StatsPanel statsObj={stats} title={`${monthLabel(ym)} AI累計シミュレーション（全${stats.ALL.validRaces}R）`} />;
 }
 
 export default function PastResults({ raceList }) {
