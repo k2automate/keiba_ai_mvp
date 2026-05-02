@@ -141,7 +141,7 @@ def normalize_top3_prob(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
         df.loc[grp_idx, "top3_prob"] = df.loc[grp_idx, "top3_prob"].clip(0.0, 1.0)
     return df
 
-# 🌟印ロジック：◎は「勝率+複勝率」、その他は「純粋な複勝率順」を維持
+# 🌟修正2：印は完全に「確率順（複勝率＞勝率）」で打ち、ペナルティ馬は最高で△にする
 def assign_signals_improved(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
     df = df.copy()
     df["signal"] = "様子見"
@@ -153,29 +153,34 @@ def assign_signals_improved(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFra
         grp = df.loc[grp_idx]
         if len(grp) == 0: continue
 
-        wp = grp["win_prob"] # オッズ加味後の勝率を使用
-        tp = grp["top3_prob"]
+        # 完全な確率順（3着内率の高さで並べ、同点なら勝率で並べる）
+        sorted_idx = grp.sort_values(by=["top3_prob", "win_prob"], ascending=[False, False]).index
         
-        combined_score = wp + tp
-        honmei_idx = combined_score.idxmax()
+        marks = [
+            ("軸", "◎", "honmei", "最有力"),
+            ("対抗", "○", "taikou", "対抗"),
+            ("単穴", "▲", "ana", "単穴"),
+            ("連下", "△", "renka", "連下")
+        ]
+        mark_idx = 0
         
-        remaining = grp.index.difference([honmei_idx])
-        sorted_tp_idx = tp.loc[remaining].sort_values(ascending=False).index
-
-        df.loc[honmei_idx, ["signal","印","mark","recommendation"]] = ["軸", "◎", "honmei", "最有力"]
-        
-        if len(sorted_tp_idx) > 0:
-            df.loc[sorted_tp_idx[0], ["signal","印","mark","recommendation"]] = ["対抗", "○", "taikou", "対抗"]
-        if len(sorted_tp_idx) > 1:
-            df.loc[sorted_tp_idx[1], ["signal","印","mark","recommendation"]] = ["単穴", "▲", "ana", "単穴"]
-        if len(sorted_tp_idx) > 2:
-            df.loc[sorted_tp_idx[2], ["signal","印","mark","recommendation"]] = ["連下", "△", "renka", "連下"]
-        if len(sorted_tp_idx) > 3:
-            df.loc[sorted_tp_idx[3], ["signal","印","mark","recommendation"]] = ["連下", "△", "renka", "連下"]
+        for idx in sorted_idx:
+            row = df.loc[idx]
+            is_penalized = (row.get("is_new", 0) == 1) or (row.get("is_first_dirt", 0) == 1) or (row.get("is_first_turf", 0) == 1)
+            
+            if is_penalized:
+                # ペナルティ馬は上位の印（◎○▲）をスキップして、最高でも△しか打たない
+                df.loc[idx, ["signal","印","mark","recommendation"]] = ["連下", "△", "renka", "連下"]
+            else:
+                if mark_idx < len(marks):
+                    df.loc[idx, ["signal","印","mark","recommendation"]] = marks[mark_idx]
+                    mark_idx += 1
+                else:
+                    # 5頭目以降は印なし（×）のまま
+                    pass
             
     return df
 
-# 🌟AI指数（ability_score）：元の「オッズ加味」の計算方法を復活
 def recalc_ability_score(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
     df = df.copy()
     SCORE_MAX = 92.0
@@ -186,7 +191,6 @@ def recalc_ability_score(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
         n = len(grp)
         if n == 0: continue
 
-        # オッズと勝率を使った「生の実力スコア」を計算
         wp_raw = grp["raw_win_prob"].clip(lower=1e-6)
         odds = safe_num(grp["win_odds"], 10.0).clip(lower=1.1)
         mkt = (1.0 / odds) / (1.0 / odds).sum()
@@ -194,9 +198,7 @@ def recalc_ability_score(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
         alpha = (wp_raw / mkt).clip(lower=0.1, upper=10.0)
         capped_odds = odds.clip(upper=10.0)
 
-        # 生スコア（AI勝率 × オッズ × アルファ）
         raw_score = wp_raw * capped_odds * np.sqrt(alpha)
-        
         log_raw = np.log1p(raw_score)
 
         s_min, s_max = log_raw.min(), log_raw.max()
@@ -207,11 +209,10 @@ def recalc_ability_score(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
 
         ability = normalized * (SCORE_MAX - SCORE_MIN) + SCORE_MIN
         
-        # 🌟地方馬へのスコア強制ペナルティは維持
         is_local = grp.get("所属", pd.Series([""]*n, index=grp.index)).astype(str).str.contains(r"地|地方") | \
                    grp.get("馬名", pd.Series([""]*n, index=grp.index)).astype(str).str.contains(r"\(地\)|（地）|\[地\]")
         if is_local.any():
-            ability[is_local] = ability[is_local] * 0.7 # 30%カット
+            ability[is_local] = ability[is_local] * 0.7 
             
         df.loc[grp_idx, "ability_score"] = ability.round(1)
 
@@ -271,7 +272,7 @@ def run_pipeline():
     tr_def = {"調教師_win_rate": trainer_stats["調教師_win_rate"].mean(), "調教師_top3_rate": trainer_stats["調教師_top3_rate"].mean()} if not trainer_stats.empty else {"調教師_win_rate": 0.08, "調教師_top3_rate": 0.25}
 
     feat_records = []
-    # 🌟オッズを正常に読み込む（フラット化を撤廃）
+    
     for idx, row in df.iterrows():
         h, v = str(row.get("馬名", "")), str(row.get("開催", ""))
         d = scalar_safe(row.get("距離", 1600), 1600.0)
@@ -283,7 +284,6 @@ def run_pipeline():
         feat["horse_weight"], feat["weight_change"] = scalar_safe(row.get("馬体重", 480), 480.0), scalar_safe(row.get("馬体重増減", 0), 0.0)
         feat["weight_ratio"] = feat["weight_change"] / (feat["horse_weight"] + 1)
         
-        # ここでオッズ情報をしっかり取得
         odds_val = row.get("単勝オッズ", 10.0)
         odds_raw = max(scalar_safe(odds_val, 10.0), 1.1)
         feat["log_odds"], feat["is_longshot"] = float(np.log(odds_raw)), int(odds_raw >= 20.0)
@@ -293,6 +293,25 @@ def run_pipeline():
         feat["trainer_win_rate"], feat["trainer_top3_rate"] = tr_info["調教師_win_rate"], tr_info["調教師_top3_rate"]
         feat.update(build_multi_race_feats(past)); feat.update(build_course_feats(past, v, d))
         feat["rest_days"] = calc_rest_days(past, today_str)
+        
+        # 🌟修正1：馬場状態（ダート・芝）の検知と初ダート・初芝判定
+        cur_track_str = str(row.get("距離", "")) + str(row.get("馬場状態", "")) + str(row.get("レース名", "")) + str(row.get("コース", ""))
+        cur_is_dirt = "ダ" in cur_track_str or "ダート" in cur_track_str
+        cur_is_turf = "芝" in cur_track_str
+        
+        past_str = ""
+        if not past.empty:
+            past_cols = [c for c in ["距離", "馬場状態", "レース名", "コース"] if c in past.columns]
+            if past_cols:
+                past_str = past[past_cols].astype(str).agg(''.join, axis=1).str.cat()
+        
+        past_has_dirt = "ダ" in past_str or "ダート" in past_str
+        past_has_turf = "芝" in past_str
+        
+        feat["is_new"] = int(past.empty)
+        feat["is_first_dirt"] = int(not past.empty and cur_is_dirt and not past_has_dirt)
+        feat["is_first_turf"] = int(not past.empty and cur_is_turf and not past_has_turf)
+
         if not past.empty:
             pr = past.iloc[0]
             feat["prev_rank"], feat["prev_margin"] = scalar_safe(pr.get("着順", 9), 9.0), scalar_safe(pr.get("着差タイム", 1), 1.0)
@@ -313,7 +332,11 @@ def run_pipeline():
     feat_df = pd.DataFrame(feat_records).set_index("_idx")
     feat_df["_rg"] = race_key.values
     
-    # オッズ情報を正しく計算（フラット化の撤去）
+    # AIカンニング防止用のフラグをDataFrameに退避
+    df["is_new"] = feat_df["is_new"].values
+    df["is_first_dirt"] = feat_df["is_first_dirt"].values
+    df["is_first_turf"] = feat_df["is_first_turf"].values
+
     df_for_mprob = pd.DataFrame({"log_odds": feat_df["log_odds"], "_rg": feat_df["_rg"]})
     for rg, grp in df_for_mprob.groupby("_rg"):
         o_exp = np.exp(grp["log_odds"])
@@ -326,24 +349,33 @@ def run_pipeline():
     feat_df.drop(columns=["_rg"], inplace=True)
     X = feat_df.reindex(columns=required_feats, fill_value=0)
     
-    # 予測
     df["raw_win_prob"] = model_win.predict(X)
     df["top3_prob"] = np.maximum(model_top3.predict(X), df["raw_win_prob"])
     df["win_odds"] = safe_num(df.get("単勝オッズ", df.get("win_odds", 10.0)), 10.0)
 
-    # 🌟新馬ペナルティ（維持）
-    is_new_mask = [horse_past.get(str(h), pd.DataFrame()).empty for h in df.get("馬名", pd.Series([""]*len(df)))]
-    df.loc[is_new_mask, "raw_win_prob"] *= 0.6 
-    df.loc[is_new_mask, "top3_prob"] *= 0.6
-    df.loc[is_new_mask, "馬名"] = df.loc[is_new_mask, "馬名"].astype(str) + " (新馬)"
+    # 🌟新馬・初芝・初ダートのペナルティ処理（確率強制半減＋UI表示用ラベル追加）
+    mask_new = df["is_new"] == 1
+    mask_first_dirt = df["is_first_dirt"] == 1
+    mask_first_turf = df["is_first_turf"] == 1
 
-    # 🌟地方馬ペナルティ（維持：生確率もカット）
+    df.loc[mask_new, "raw_win_prob"] *= 0.5 
+    df.loc[mask_new, "top3_prob"] *= 0.5
+    df.loc[mask_new, "馬名"] = df.loc[mask_new, "馬名"].astype(str) + " (新馬)"
+
+    df.loc[mask_first_dirt, "raw_win_prob"] *= 0.5 
+    df.loc[mask_first_dirt, "top3_prob"] *= 0.5
+    df.loc[mask_first_dirt, "馬名"] = df.loc[mask_first_dirt, "馬名"].astype(str) + " (初ダ)"
+
+    df.loc[mask_first_turf, "raw_win_prob"] *= 0.5 
+    df.loc[mask_first_turf, "top3_prob"] *= 0.5
+    df.loc[mask_first_turf, "馬名"] = df.loc[mask_first_turf, "馬名"].astype(str) + " (初芝)"
+
+    # 地方馬ペナルティ（維持）
     is_local = df.get("所属", pd.Series([""]*len(df), index=df.index)).astype(str).str.contains(r"地|地方") | \
                df.get("馬名", pd.Series([""]*len(df), index=df.index)).astype(str).str.contains(r"\(地\)|（地）|\[地\]")
     df.loc[is_local, "raw_win_prob"] *= 0.5
     df.loc[is_local, "top3_prob"] *= 0.5
 
-    # オッズ補正（元のロジックを復活）
     df["win_prob"] = df["raw_win_prob"] / df.groupby(race_key)["raw_win_prob"].transform("sum")
     _m_prob = 1.0 / df["win_odds"].clip(lower=1.1)
     m_prob_norm = _m_prob / df.groupby(race_key)[_m_prob.name].transform("sum")
@@ -354,7 +386,6 @@ def run_pipeline():
     
     df["win_ev"] = df["win_prob"] * df["win_odds"]
 
-    # 各種スコア計算
     df = normalize_top3_prob(df, race_key)
     df = assign_signals_improved(df, race_key)
     df = recalc_ability_score(df, race_key)  
@@ -394,7 +425,7 @@ def run_pipeline():
     for f in [OUT_DETAIL, OUT_LIST]:
         if os.path.exists(f): shutil.copy(f, os.path.join(ui_data_dir, os.path.basename(f)))
 
-    print(f"✅ 推論完了: オッズ評価を復活させつつ、地方馬ペナルティを維持しました！")
+    print(f"✅ 推論完了: 初芝・初ダート・新馬をペナルティ＆完全確率順の印に修正しました！")
 
 if __name__ == "__main__":
     run_pipeline()
