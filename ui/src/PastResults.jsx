@@ -3,7 +3,7 @@
  * ui/src/PastResults.jsx として保存する
  */
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 // ============================================================
 // 🌟公開データ ＋ ローカルデータ 統合ストレージ
@@ -77,7 +77,6 @@ const MARK_BG = { "◎": "#EF4444", "○": "#3B82F6", "▲": "#F59E0B", "△": "
 const GATE_BG = ["","#FFFFFF","#111111","#EF4444","#3B82F6","#F59E0B","#22C55E","#F97316","#EC4899"];
 const GATE_FG = ["","#111111","#FFFFFF","#FFFFFF","#FFFFFF","#111111","#FFFFFF","#FFFFFF","#FFFFFF"];
 
-// 🌟 開催場マッピング＆強制日本語化関数
 const VENUE_MAP = {
   "SAPPORO": "札幌", "HAKODATE": "函館", "FUKUSHIMA": "福島", "NIIGATA": "新潟",
   "TOKYO": "東京", "NAKAYAMA": "中山", "CHUKYO": "中京", "KYOTO": "京都",
@@ -110,7 +109,25 @@ function monthLabel(ym) {
   return `${parseInt(ym.split("-")[1])}月`;
 }
 
-// 🌟 的中レース情報を保存できるように initStats を拡張
+// ============================================================
+// 🌟 確率計算ロジック（UI表示用）
+// ============================================================
+function calcUmarenProb(p1_100, p2_100) {
+  const p1 = (p1_100 || 0) / 100, p2 = (p2_100 || 0) / 100;
+  const eps = 1e-9;
+  return ((p1 * p2 / (1 - p1 + eps)) + (p2 * p1 / (1 - p2 + eps))) * 100;
+}
+
+function calcWideProb(w1, w2) {
+  const p1 = (w1.top3_prob || 0) / 100, p2 = (w2.top3_prob || 0) / 100;
+  const base = p1 * p2 * 0.85;
+  const umaren = calcUmarenProb(w1.win_prob, w2.win_prob) / 100;
+  return Math.min(Math.max(base, umaren * 2.5), 0.999) * 100;
+}
+
+// ============================================================
+// シミュレーション計算ロジック
+// ============================================================
 function initStats() {
   return { 
     validRaces:0, 
@@ -136,14 +153,14 @@ function updateStats(st, r) {
   st.tsBet += 100;
   if (winS[0]?.rank === 1) { 
     st.tsHit++; st.tsRet += p_ts; 
-    st.tsList.push({ rawDate, date: displayDate, race: raceName, type: "単勝", ret: p_ts, horse: winS[0].name });
+    st.tsList.push({ rawDate, date: displayDate, race: raceName, type: "単勝", ret: p_ts, horse: winS[0].name, prob: winS[0].win_prob || 0 });
   }
 
   st.umBet += 100;
   const u1=winS[0], u2=winS[1];
   if (u1?.rank>0 && u2?.rank>0 && u1.rank<=2 && u2.rank<=2) { 
     st.umHit++; st.umRet += p_um; 
-    st.umList.push({ rawDate, date: displayDate, race: raceName, type: "馬連", ret: p_um, horse: `${u1.name} - ${u2.name}` });
+    st.umList.push({ rawDate, date: displayDate, race: raceName, type: "馬連", ret: p_um, horse: `${u1.name} - ${u2.name}`, prob: calcUmarenProb(u1.win_prob, u2.win_prob) });
   }
 
   st.wdBet += 100;
@@ -164,7 +181,7 @@ function updateStats(st, r) {
     else if (hitPair === pair23) p_wd = Number(r.payouts?.wide3 || 0);
     
     st.wdRet += p_wd; 
-    st.wdList.push({ rawDate, date: displayDate, race: raceName, type: "ワイド", ret: p_wd, horse: `${w1h.name} - ${w2h.name}` });
+    st.wdList.push({ rawDate, date: displayDate, race: raceName, type: "ワイド", ret: p_wd, horse: `${w1h.name} - ${w2h.name}`, prob: calcWideProb(w1h, w2h) });
   }
 }
 
@@ -218,10 +235,24 @@ function AmountInput({ label, value, onChange }) {
   );
 }
 
-// 🌟 的中履歴ポップアップ
+// 🌟 的中履歴ポップアップ（レースごとにグループ化＆確率表示版）
 function HitHistoryModal({ stats, onClose }) {
   const hits = [...stats.tsList, ...stats.umList, ...stats.wdList];
-  hits.sort((a,b) => b.rawDate.localeCompare(a.rawDate) || b.ret - a.ret);
+  
+  // レースごとにグループ化
+  const grouped = {};
+  hits.forEach(h => {
+     const key = `${h.rawDate}__${h.race}`;
+     if (!grouped[key]) grouped[key] = { rawDate: h.rawDate, date: h.date, race: h.race, items: [], totalRet: 0 };
+     grouped[key].items.push(h);
+     grouped[key].totalRet += h.ret;
+  });
+  
+  // 日付の降順、同じ日付なら合計配当額の降順でソート
+  const groupedArray = Object.values(grouped).sort((a,b) => {
+     if (a.rawDate !== b.rawDate) return b.rawDate.localeCompare(a.rawDate);
+     return b.totalRet - a.totalRet;
+  });
 
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,.7)",display:"flex",flexDirection:"column",justifyContent:"center", padding:16}}>
@@ -231,20 +262,32 @@ function HitHistoryModal({ stats, onClose }) {
            <button onClick={onClose} style={{background:"none",border:"none",color:"#94A3B8",fontSize:26,cursor:"pointer",lineHeight:1}}>×</button>
         </div>
         <div style={{flex:1, overflowY:"auto", padding:"16px", background:"#0F172A"}}>
-           {hits.length === 0 ? <div style={{textAlign:"center", color:"#64748B", padding:24, fontSize:13}}>的中履歴がありません</div> :
-              hits.map((h, i) => (
-                <div key={i} style={{background:"#1E293B", padding:"12px 14px", borderRadius:10, marginBottom:10, border:"1px solid #334155"}}>
-                   <div style={{display:"flex", justifyContent:"space-between", marginBottom:8, alignItems:"center"}}>
-                      <span style={{color:"#94A3B8", fontSize:12, fontWeight:600}}>{h.date} - {h.race}</span>
-                      <span style={{
-                        background: h.type==="単勝"?"rgba(245,158,11,0.15)":h.type==="馬連"?"rgba(139,92,246,0.15)":"rgba(59,130,246,0.15)",
-                        color: h.type==="単勝"?"#F59E0B":h.type==="馬連"?"#C084FC":"#60A5FA",
-                        padding:"3px 8px", borderRadius:6, fontSize:11, fontWeight:"bold"
-                      }}>{h.type}</span>
+           {groupedArray.length === 0 ? <div style={{textAlign:"center", color:"#64748B", padding:24, fontSize:13}}>的中履歴がありません</div> :
+              groupedArray.map((g, i) => (
+                <div key={i} style={{background:"#1E293B", borderRadius:10, marginBottom:12, border:"1px solid #334155", overflow:"hidden"}}>
+                   {/* レース単位のヘッダー */}
+                   <div style={{background:"#334155", padding:"8px 14px", display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                      <span style={{color:"#F1F5F9", fontSize:13, fontWeight:"bold"}}>{g.date} - {g.race}</span>
+                      <span style={{color:"#F59E0B", fontSize:12, fontWeight:"bold"}}>計 {g.totalRet} 円</span>
                    </div>
-                   <div style={{display:"flex", justifyContent:"space-between", alignItems:"flex-end"}}>
-                      <span style={{color:"#F1F5F9", fontSize:15, fontWeight:"bold"}}>{h.horse}</span>
-                      <span style={{color:"#F59E0B", fontSize:20, fontWeight:900, letterSpacing:"-0.5px"}}>{h.ret} <span style={{fontSize:12}}>円</span></span>
+                   {/* 当たった券種ごとのリスト */}
+                   <div style={{padding:"4px 14px"}}>
+                     {g.items.map((h, j) => (
+                       <div key={j} style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom: j!==g.items.length-1 ? "1px solid rgba(255,255,255,0.05)" : "none"}}>
+                          <div style={{display:"flex", alignItems:"center", gap:10}}>
+                              <span style={{
+                                background: h.type==="単勝"?"rgba(245,158,11,0.15)":h.type==="馬連"?"rgba(139,92,246,0.15)":"rgba(59,130,246,0.15)",
+                                color: h.type==="単勝"?"#F59E0B":h.type==="馬連"?"#C084FC":"#60A5FA",
+                                padding:"3px 8px", borderRadius:6, fontSize:11, fontWeight:"bold", width:44, textAlign:"center"
+                              }}>{h.type}</span>
+                              <div style={{display:"flex", flexDirection:"column"}}>
+                                <span style={{color:"#F1F5F9", fontSize:14, fontWeight:600}}>{h.horse}</span>
+                                <span style={{color:"#64748B", fontSize:11}}>AI推定確率: <span style={{color:"#94A3B8"}}>{h.prob?.toFixed(1)}%</span></span>
+                              </div>
+                          </div>
+                          <span style={{color:"#F59E0B", fontSize:16, fontWeight:800}}>{h.ret}<span style={{fontSize:11, fontWeight:"normal", marginLeft:2}}>円</span></span>
+                       </div>
+                     ))}
                    </div>
                 </div>
               ))
@@ -442,7 +485,7 @@ function DayResultView({ dateStr, raceList, onEdit, onBack }) {
   useEffect(() => { loadDay(dateStr).then(d => { setDayData(d); }); }, [dateStr]);
   const races = dayData?.races ?? [];
   races.forEach(r => r.dateStr = dateStr);
-  const simStats = useMemo(() => calcSimStats(races), [races]);
+  const simStats = calcSimStats(races);
 
   return (
     <div style={{background:"#0F172A",minHeight:"100vh"}}>
