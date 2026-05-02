@@ -141,6 +141,7 @@ def normalize_top3_prob(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
         df.loc[grp_idx, "top3_prob"] = df.loc[grp_idx, "top3_prob"].clip(0.0, 1.0)
     return df
 
+# 🌟印ロジック：◎は「勝率+複勝率」、その他は「純粋な複勝率順」を維持
 def assign_signals_improved(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
     df = df.copy()
     df["signal"] = "様子見"
@@ -152,7 +153,7 @@ def assign_signals_improved(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFra
         grp = df.loc[grp_idx]
         if len(grp) == 0: continue
 
-        wp = grp["raw_win_prob"]
+        wp = grp["win_prob"] # オッズ加味後の勝率を使用
         tp = grp["top3_prob"]
         
         combined_score = wp + tp
@@ -174,6 +175,7 @@ def assign_signals_improved(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFra
             
     return df
 
+# 🌟AI指数（ability_score）：元の「オッズ加味」の計算方法を復活
 def recalc_ability_score(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
     df = df.copy()
     SCORE_MAX = 92.0
@@ -184,11 +186,18 @@ def recalc_ability_score(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
         n = len(grp)
         if n == 0: continue
 
+        # オッズと勝率を使った「生の実力スコア」を計算
         wp_raw = grp["raw_win_prob"].clip(lower=1e-6)
-        tp_raw = grp["top3_prob"].clip(lower=1e-6)
+        odds = safe_num(grp["win_odds"], 10.0).clip(lower=1.1)
+        mkt = (1.0 / odds) / (1.0 / odds).sum()
+
+        alpha = (wp_raw / mkt).clip(lower=0.1, upper=10.0)
+        capped_odds = odds.clip(upper=10.0)
+
+        # 生スコア（AI勝率 × オッズ × アルファ）
+        raw_score = wp_raw * capped_odds * np.sqrt(alpha)
         
-        hybrid_score = (wp_raw * 0.7) + (tp_raw * 0.3)
-        log_raw = np.log1p(hybrid_score * 100)
+        log_raw = np.log1p(raw_score)
 
         s_min, s_max = log_raw.min(), log_raw.max()
         if s_max > s_min + 1e-6:
@@ -198,48 +207,38 @@ def recalc_ability_score(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
 
         ability = normalized * (SCORE_MAX - SCORE_MIN) + SCORE_MIN
         
-        # 🌟修正2: 地方馬へのスコア強制ペナルティ（ここでガッツリ下げる）
+        # 🌟地方馬へのスコア強制ペナルティは維持
         is_local = grp.get("所属", pd.Series([""]*n, index=grp.index)).astype(str).str.contains(r"地|地方") | \
                    grp.get("馬名", pd.Series([""]*n, index=grp.index)).astype(str).str.contains(r"\(地\)|（地）|\[地\]")
         if is_local.any():
-            ability[is_local] = ability[is_local] * 0.7 # スコアを強制的に30%カット
+            ability[is_local] = ability[is_local] * 0.7 # 30%カット
             
         df.loc[grp_idx, "ability_score"] = ability.round(1)
 
     return df
 
 def calc_confidence_rank(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
-    # 🌟修正1: ランク判定を「スコア差」から「勝率差（絶対評価）」に変更
-    # 勝率(win_prob)の差で判定することで、相対評価によるブレをなくしSSを復活させる
-    RANK_THRESHOLDS = {"SS": 0.15, "S": 0.08, "A": 0.04, "B": 0.015, "C": 0.00}
+    RANK_THRESHOLDS = {"SS": 0.40, "S": 0.25, "A": 0.15, "B": 0.07, "C": 0.00}
     RANK_LABELS   = ["SS", "S", "A", "B", "C"]
     RANK_MEANINGS = {"SS": "鉄板", "S": "本命", "A": "有力", "B": "混戦", "C": "難解"}
-    
     df = df.copy()
     df["confidence_rank"]  = "C"
     df["confidence_label"] = "難解"
 
     for rg, grp_idx in df.groupby(race_key).groups.items():
         grp = df.loc[grp_idx]
-        
-        # 勝率でソート
-        probs = pd.to_numeric(grp["win_prob"], errors="coerce").fillna(0.0).sort_values(ascending=False)
-        
-        if len(probs) < 2: 
-            rank = "C"
+        scores = pd.to_numeric(grp["ability_score"], errors="coerce").fillna(20.0).sort_values(ascending=False)
+        if len(scores) < 2: rank = "C"
         else:
-            p1, p2 = probs.iloc[0], probs.iloc[1]
-            gap = p1 - p2 # 勝率の「差」
-            
+            s1, s2 = scores.iloc[0], scores.iloc[1]
+            gap_ratio = float((s1 - s2) / (s1 + 1e-6))
             rank = "C"
             for label in RANK_LABELS:
-                if gap >= RANK_THRESHOLDS[label]:
+                if gap_ratio >= RANK_THRESHOLDS[label]:
                     rank = label
                     break
-                    
         df.loc[grp_idx, "confidence_rank"]  = rank
         df.loc[grp_idx, "confidence_label"] = RANK_MEANINGS[rank]
-        
     return df
 
 def run_pipeline():
@@ -272,6 +271,7 @@ def run_pipeline():
     tr_def = {"調教師_win_rate": trainer_stats["調教師_win_rate"].mean(), "調教師_top3_rate": trainer_stats["調教師_top3_rate"].mean()} if not trainer_stats.empty else {"調教師_win_rate": 0.08, "調教師_top3_rate": 0.25}
 
     feat_records = []
+    # 🌟オッズを正常に読み込む（フラット化を撤廃）
     for idx, row in df.iterrows():
         h, v = str(row.get("馬名", "")), str(row.get("開催", ""))
         d = scalar_safe(row.get("距離", 1600), 1600.0)
@@ -283,6 +283,7 @@ def run_pipeline():
         feat["horse_weight"], feat["weight_change"] = scalar_safe(row.get("馬体重", 480), 480.0), scalar_safe(row.get("馬体重増減", 0), 0.0)
         feat["weight_ratio"] = feat["weight_change"] / (feat["horse_weight"] + 1)
         
+        # ここでオッズ情報をしっかり取得
         odds_val = row.get("単勝オッズ", 10.0)
         odds_raw = max(scalar_safe(odds_val, 10.0), 1.1)
         feat["log_odds"], feat["is_longshot"] = float(np.log(odds_raw)), int(odds_raw >= 20.0)
@@ -312,35 +313,48 @@ def run_pipeline():
     feat_df = pd.DataFrame(feat_records).set_index("_idx")
     feat_df["_rg"] = race_key.values
     
-    if "log_odds" in feat_df.columns: feat_df["log_odds"] = float(np.log(10.0))
-    if "market_prob" in feat_df.columns: feat_df["market_prob"] = 0.1
-    if "odds_rank" in feat_df.columns: feat_df["odds_rank"] = 8.0
-    if "is_favorite" in feat_df.columns: feat_df["is_favorite"] = 0
-    if "is_longshot" in feat_df.columns: feat_df["is_longshot"] = 0
+    # オッズ情報を正しく計算（フラット化の撤去）
+    df_for_mprob = pd.DataFrame({"log_odds": feat_df["log_odds"], "_rg": feat_df["_rg"]})
+    for rg, grp in df_for_mprob.groupby("_rg"):
+        o_exp = np.exp(grp["log_odds"])
+        mp_r = 1.0 / o_exp
+        feat_df.loc[grp.index, "market_prob"] = (mp_r / mp_r.sum()).values
+        feat_df.loc[grp.index, "odds_rank"] = o_exp.rank(method="min").values
+        feat_df.loc[grp.index, "is_favorite"] = 0
+        feat_df.at[o_exp.idxmin(), "is_favorite"] = 1
 
     feat_df.drop(columns=["_rg"], inplace=True)
     X = feat_df.reindex(columns=required_feats, fill_value=0)
     
+    # 予測
     df["raw_win_prob"] = model_win.predict(X)
     df["top3_prob"] = np.maximum(model_top3.predict(X), df["raw_win_prob"])
     df["win_odds"] = safe_num(df.get("単勝オッズ", df.get("win_odds", 10.0)), 10.0)
 
-    # 🌟新馬ペナルティ
+    # 🌟新馬ペナルティ（維持）
     is_new_mask = [horse_past.get(str(h), pd.DataFrame()).empty for h in df.get("馬名", pd.Series([""]*len(df)))]
     df.loc[is_new_mask, "raw_win_prob"] *= 0.6 
     df.loc[is_new_mask, "top3_prob"] *= 0.6
     df.loc[is_new_mask, "馬名"] = df.loc[is_new_mask, "馬名"].astype(str) + " (新馬)"
 
-    # 🌟地方馬ペナルティ（生確率の段階でも下げる）
+    # 🌟地方馬ペナルティ（維持：生確率もカット）
     is_local = df.get("所属", pd.Series([""]*len(df), index=df.index)).astype(str).str.contains(r"地|地方") | \
                df.get("馬名", pd.Series([""]*len(df), index=df.index)).astype(str).str.contains(r"\(地\)|（地）|\[地\]")
     df.loc[is_local, "raw_win_prob"] *= 0.5
     df.loc[is_local, "top3_prob"] *= 0.5
 
-    # 勝率の正規化
+    # オッズ補正（元のロジックを復活）
     df["win_prob"] = df["raw_win_prob"] / df.groupby(race_key)["raw_win_prob"].transform("sum")
-    df["win_ev"] = df["win_prob"] * df["win_odds"]
+    _m_prob = 1.0 / df["win_odds"].clip(lower=1.1)
+    m_prob_norm = _m_prob / df.groupby(race_key)[_m_prob.name].transform("sum")
+    df["market_prob"] = m_prob_norm 
     
+    df["win_prob"] = np.minimum(df["win_prob"], m_prob_norm * 4.0) 
+    df["win_prob"] = df["win_prob"] / df.groupby(race_key)["win_prob"].transform("sum")
+    
+    df["win_ev"] = df["win_prob"] * df["win_odds"]
+
+    # 各種スコア計算
     df = normalize_top3_prob(df, race_key)
     df = assign_signals_improved(df, race_key)
     df = recalc_ability_score(df, race_key)  
@@ -380,7 +394,7 @@ def run_pipeline():
     for f in [OUT_DETAIL, OUT_LIST]:
         if os.path.exists(f): shutil.copy(f, os.path.join(ui_data_dir, os.path.basename(f)))
 
-    print(f"✅ 推論完了: AIスコア調整、新馬・地方馬ペナルティ、SSランク基準の改修が完了しました！")
+    print(f"✅ 推論完了: オッズ評価を復活させつつ、地方馬ペナルティを維持しました！")
 
 if __name__ == "__main__":
     run_pipeline()
