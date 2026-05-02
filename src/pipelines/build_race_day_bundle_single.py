@@ -141,7 +141,6 @@ def normalize_top3_prob(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
         df.loc[grp_idx, "top3_prob"] = df.loc[grp_idx, "top3_prob"].clip(0.0, 1.0)
     return df
 
-# 🌟修正1：印の打ち方を「◎は勝率+複勝率トップ」「他は純粋な複勝率順」に変更
 def assign_signals_improved(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
     df = df.copy()
     df["signal"] = "様子見"
@@ -156,11 +155,9 @@ def assign_signals_improved(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFra
         wp = grp["raw_win_prob"]
         tp = grp["top3_prob"]
         
-        # ◎（本命）は「勝率＋複勝率」の総合力が最も高い馬
         combined_score = wp + tp
         honmei_idx = combined_score.idxmax()
         
-        # それ以外の馬は純粋に「複勝率」の高さだけで並べる
         remaining = grp.index.difference([honmei_idx])
         sorted_tp_idx = tp.loc[remaining].sort_values(ascending=False).index
 
@@ -200,32 +197,49 @@ def recalc_ability_score(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
             normalized = pd.Series([0.5] * n, index=grp_idx)
 
         ability = normalized * (SCORE_MAX - SCORE_MIN) + SCORE_MIN
+        
+        # 🌟修正2: 地方馬へのスコア強制ペナルティ（ここでガッツリ下げる）
+        is_local = grp.get("所属", pd.Series([""]*n, index=grp.index)).astype(str).str.contains(r"地|地方") | \
+                   grp.get("馬名", pd.Series([""]*n, index=grp.index)).astype(str).str.contains(r"\(地\)|（地）|\[地\]")
+        if is_local.any():
+            ability[is_local] = ability[is_local] * 0.7 # スコアを強制的に30%カット
+            
         df.loc[grp_idx, "ability_score"] = ability.round(1)
 
     return df
 
 def calc_confidence_rank(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
-    RANK_THRESHOLDS = {"SS": 0.40, "S": 0.25, "A": 0.15, "B": 0.07, "C": 0.00}
+    # 🌟修正1: ランク判定を「スコア差」から「勝率差（絶対評価）」に変更
+    # 勝率(win_prob)の差で判定することで、相対評価によるブレをなくしSSを復活させる
+    RANK_THRESHOLDS = {"SS": 0.15, "S": 0.08, "A": 0.04, "B": 0.015, "C": 0.00}
     RANK_LABELS   = ["SS", "S", "A", "B", "C"]
     RANK_MEANINGS = {"SS": "鉄板", "S": "本命", "A": "有力", "B": "混戦", "C": "難解"}
+    
     df = df.copy()
     df["confidence_rank"]  = "C"
     df["confidence_label"] = "難解"
 
     for rg, grp_idx in df.groupby(race_key).groups.items():
         grp = df.loc[grp_idx]
-        scores = pd.to_numeric(grp["ability_score"], errors="coerce").fillna(20.0).sort_values(ascending=False)
-        if len(scores) < 2: rank = "C"
+        
+        # 勝率でソート
+        probs = pd.to_numeric(grp["win_prob"], errors="coerce").fillna(0.0).sort_values(ascending=False)
+        
+        if len(probs) < 2: 
+            rank = "C"
         else:
-            s1, s2 = scores.iloc[0], scores.iloc[1]
-            gap_ratio = float((s1 - s2) / (s1 + 1e-6))
+            p1, p2 = probs.iloc[0], probs.iloc[1]
+            gap = p1 - p2 # 勝率の「差」
+            
             rank = "C"
             for label in RANK_LABELS:
-                if gap_ratio >= RANK_THRESHOLDS[label]:
+                if gap >= RANK_THRESHOLDS[label]:
                     rank = label
                     break
+                    
         df.loc[grp_idx, "confidence_rank"]  = rank
         df.loc[grp_idx, "confidence_label"] = RANK_MEANINGS[rank]
+        
     return df
 
 def run_pipeline():
@@ -308,21 +322,22 @@ def run_pipeline():
     X = feat_df.reindex(columns=required_feats, fill_value=0)
     
     df["raw_win_prob"] = model_win.predict(X)
-    
-    # 🌟修正2：AIの予測ブレを防ぎ、複勝率が必ず勝率以上になるように補正
     df["top3_prob"] = np.maximum(model_top3.predict(X), df["raw_win_prob"])
-    
     df["win_odds"] = safe_num(df.get("単勝オッズ", df.get("win_odds", 10.0)), 10.0)
 
+    # 🌟新馬ペナルティ
     is_new_mask = [horse_past.get(str(h), pd.DataFrame()).empty for h in df.get("馬名", pd.Series([""]*len(df)))]
     df.loc[is_new_mask, "raw_win_prob"] *= 0.6 
     df.loc[is_new_mask, "top3_prob"] *= 0.6
     df.loc[is_new_mask, "馬名"] = df.loc[is_new_mask, "馬名"].astype(str) + " (新馬)"
 
-    is_local = df.get("馬名", df.get("horse_name", pd.Series([""]*len(df), index=df.index))).astype(str).str.contains(r"\(地\)|（地）")
+    # 🌟地方馬ペナルティ（生確率の段階でも下げる）
+    is_local = df.get("所属", pd.Series([""]*len(df), index=df.index)).astype(str).str.contains(r"地|地方") | \
+               df.get("馬名", pd.Series([""]*len(df), index=df.index)).astype(str).str.contains(r"\(地\)|（地）|\[地\]")
     df.loc[is_local, "raw_win_prob"] *= 0.5
     df.loc[is_local, "top3_prob"] *= 0.5
 
+    # 勝率の正規化
     df["win_prob"] = df["raw_win_prob"] / df.groupby(race_key)["raw_win_prob"].transform("sum")
     df["win_ev"] = df["win_prob"] * df["win_odds"]
     
@@ -365,7 +380,7 @@ def run_pipeline():
     for f in [OUT_DETAIL, OUT_LIST]:
         if os.path.exists(f): shutil.copy(f, os.path.join(ui_data_dir, os.path.basename(f)))
 
-    print(f"✅ 推論完了: 確率の逆転防止と印の改善が完了しました！")
+    print(f"✅ 推論完了: AIスコア調整、新馬・地方馬ペナルティ、SSランク基準の改修が完了しました！")
 
 if __name__ == "__main__":
     run_pipeline()
