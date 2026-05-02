@@ -126,8 +126,9 @@ def read_csv_safe(path: str) -> pd.DataFrame | None:
         except: continue
     return None
 
+
 # =====================================================================
-# Claude提案のパッチ群（同着防止＆対数スケール完全版）
+# パッチ群（完全実力主義版：オッズを排除）
 # =====================================================================
 
 def normalize_top3_prob(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
@@ -154,48 +155,34 @@ def assign_signals_improved(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFra
 
     for rg, grp_idx in df.groupby(race_key).groups.items():
         grp = df.loc[grp_idx]
-        n = len(grp)
-        if n == 0: continue
+        if len(grp) == 0: continue
 
-        mkt = grp["market_prob"].clip(lower=1e-6) if "market_prob" in grp.columns else pd.Series([1.0/n]*n, index=grp.index)
-        wp = grp["win_prob"].clip(lower=1e-6)
-        odds = grp["win_odds"].clip(lower=1.1)
+        # 🌟オッズを完全に排除し、AIが弾き出した「純粋な勝率」と「複勝率」だけで評価する
+        wp = grp["raw_win_prob"]
+        tp = grp["top3_prob"]
 
-        alpha = (wp / mkt).clip(lower=0.1, upper=10.0)
-        capped_odds = odds.clip(upper=10.0)
-
-        anchor_score = wp * capped_odds * np.log1p(alpha)
-        hole_score = wp * odds * (alpha > 1.2).astype(float)
-        hole_score = hole_score.where(odds >= 5.0, 0.0)
-        top3_score = grp["top3_prob"] if "top3_prob" in grp.columns else wp * 3
-
-        is_eligible = wp >= 0.10
-        honmei_idx = anchor_score[is_eligible].idxmax() if is_eligible.any() else anchor_score.idxmax()
-        df.loc[honmei_idx, ["signal","印","mark","recommendation"]] = ["軸", "◎", "honmei", "最有力"]
-
-        remaining = grp.index.difference([honmei_idx])
-        if len(remaining) > 0:
-            taikou_idx = anchor_score.loc[remaining].idxmax()
-            df.loc[taikou_idx, ["signal","印","mark","recommendation"]] = ["対抗", "○", "taikou", "対抗"]
-
-            remaining2 = remaining.difference([taikou_idx])
-            if len(remaining2) > 0 and hole_score.loc[remaining2].max() > 0:
-                ana_idx = hole_score.loc[remaining2].idxmax()
-                df.loc[ana_idx, ["signal","印","mark","recommendation"]] = ["穴", "▲", "ana", "穴"]
-
-                remaining3 = remaining2.difference([ana_idx])
-                if len(remaining3) > 0:
-                    renka_idx = top3_score.loc[remaining3].idxmax()
-                    df.loc[renka_idx, ["signal","印","mark","recommendation"]] = ["連下", "△", "renka", "連下"]
-            else:
-                if len(remaining2) > 0:
-                    renka_idx = top3_score.loc[remaining2].idxmax()
-                    df.loc[renka_idx, ["signal","印","mark","recommendation"]] = ["連下", "△", "renka", "連下"]
+        sorted_idx = wp.sort_values(ascending=False).index
+        
+        if len(sorted_idx) > 0:
+            df.loc[sorted_idx[0], ["signal","印","mark","recommendation"]] = ["軸", "◎", "honmei", "最有力"]
+        if len(sorted_idx) > 1:
+            df.loc[sorted_idx[1], ["signal","印","mark","recommendation"]] = ["対抗", "○", "taikou", "対抗"]
+        
+        if len(sorted_idx) > 2:
+            remaining = sorted_idx[2:]
+            ana_idx = tp.loc[remaining].idxmax()
+            df.loc[ana_idx, ["signal","印","mark","recommendation"]] = ["単穴", "▲", "ana", "単穴"]
+            
+            remaining2 = remaining.difference([ana_idx])
+            if len(remaining2) > 0:
+                renka_idx = tp.loc[remaining2].idxmax()
+                df.loc[renka_idx, ["signal","印","mark","recommendation"]] = ["連下", "△", "renka", "連下"]
+                
     return df
 
 def recalc_ability_score(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
     df = df.copy()
-    SCORE_MAX = 92.0 # エラーに見えないよう少し上限を下げる
+    SCORE_MAX = 92.0
     SCORE_MIN = 20.0
 
     for rg, grp_idx in df.groupby(race_key).groups.items():
@@ -203,19 +190,9 @@ def recalc_ability_score(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
         n = len(grp)
         if n == 0: continue
 
-        # オッズ相殺を避けるため、キャップ処理前の生勝率を利用する
+        # 🌟オッズ補正を撤廃し、AIの純粋な勝率だけをスコア化する
         wp_raw = grp["raw_win_prob"].clip(lower=1e-6)
-        odds = safe_num(grp["win_odds"], 10.0).clip(lower=1.1)
-        mkt = (1.0 / odds) / (1.0 / odds).sum()
-
-        alpha = (wp_raw / mkt).clip(lower=0.1, upper=10.0)
-        capped_odds = odds.clip(upper=10.0)
-
-        # 生スコア
-        raw_score = wp_raw * capped_odds * np.sqrt(alpha)
-        
-        # 対数処理で美しい階段状のグラフを生成
-        log_raw = np.log1p(raw_score)
+        log_raw = np.log1p(wp_raw * 100) # スコアを見やすくするための対数化
 
         s_min, s_max = log_raw.min(), log_raw.max()
         if s_max > s_min + 1e-6:
@@ -290,7 +267,6 @@ def run_pipeline():
     jk_def = {"騎手_win_rate": jockey_stats["騎手_win_rate"].mean(), "騎手_top3_rate": jockey_stats["騎手_top3_rate"].mean()} if not jockey_stats.empty else {"騎手_win_rate": 0.1, "騎手_top3_rate": 0.3}
     tr_def = {"調教師_win_rate": trainer_stats["調教師_win_rate"].mean(), "調教師_top3_rate": trainer_stats["調教師_top3_rate"].mean()} if not trainer_stats.empty else {"調教師_win_rate": 0.08, "調教師_top3_rate": 0.25}
 
-    # 🌟 ここが抜け落ちていた最も重要なループ処理です！
     feat_records = []
     for idx, row in df.iterrows():
         h, v = str(row.get("馬名", "")), str(row.get("開催", ""))
@@ -332,14 +308,17 @@ def run_pipeline():
     feat_df = pd.DataFrame(feat_records).set_index("_idx")
     feat_df["_rg"] = race_key.values
     
-    df_for_mprob = pd.DataFrame({"log_odds": feat_df["log_odds"], "_rg": feat_df["_rg"]})
-    for rg, grp in df_for_mprob.groupby("_rg"):
-        o_exp = np.exp(grp["log_odds"])
-        mp_r = 1.0 / o_exp
-        feat_df.loc[grp.index, "market_prob"] = (mp_r / mp_r.sum()).values
-        feat_df.loc[grp.index, "odds_rank"] = o_exp.rank(method="min").values
-        feat_df.loc[grp.index, "is_favorite"] = 0
-        feat_df.at[o_exp.idxmin(), "is_favorite"] = 1
+    # AIのカンニング防止：モデルに渡す直前にオッズ関連の数値を全員フラット（同じ）にする
+    if "log_odds" in feat_df.columns:
+        feat_df["log_odds"] = float(np.log(10.0))
+    if "market_prob" in feat_df.columns:
+        feat_df["market_prob"] = 0.1
+    if "odds_rank" in feat_df.columns:
+        feat_df["odds_rank"] = 8.0
+    if "is_favorite" in feat_df.columns:
+        feat_df["is_favorite"] = 0
+    if "is_longshot" in feat_df.columns:
+        feat_df["is_longshot"] = 0
 
     feat_df.drop(columns=["_rg"], inplace=True)
     X = feat_df.reindex(columns=required_feats, fill_value=0)
@@ -349,20 +328,20 @@ def run_pipeline():
     df["top3_prob"] = model_top3.predict(X)
     df["win_odds"] = safe_num(df.get("単勝オッズ", df.get("win_odds", 10.0)), 10.0)
 
-    # Edge Cap と market_prob の計算
+    # 🌟地方馬ペナルティ
+    # 馬名に「(地)」が含まれる場合、地方実績で過大評価されているため確率を強制的に半分にする
+    is_local = df.get("馬名", df.get("horse_name", pd.Series([""]*len(df), index=df.index))).astype(str).str.contains(r"\(地\)|（地）")
+    df.loc[is_local, "raw_win_prob"] *= 0.5  # 50%減点
+    df.loc[is_local, "top3_prob"] *= 0.5     # 50%減点
+
+    # エッジキャップ（オッズによる確率補正）を廃止し、純粋な勝率を算出
     df["win_prob"] = df["raw_win_prob"] / df.groupby(race_key)["raw_win_prob"].transform("sum")
-    _m_prob = 1.0 / df["win_odds"].clip(lower=1.1)
-    m_prob_norm = _m_prob / df.groupby(race_key)[_m_prob.name].transform("sum")
-    df["market_prob"] = m_prob_norm 
-    
-    df["win_prob"] = np.minimum(df["win_prob"], m_prob_norm * 4.0) 
-    df["win_prob"] = df["win_prob"] / df.groupby(race_key)["win_prob"].transform("sum")
 
     df["win_ev"] = df["win_prob"] * df["win_odds"]
     b = (df["win_odds"] - 1).clip(lower=0.1)
     df["kelly_fraction"] = ((df["win_prob"] * b - (1 - df["win_prob"])) / b).clip(lower=0) * 0.25
     
-    # Claude提案のパッチ群
+    # スコアや印の付与
     df = normalize_top3_prob(df, race_key)
     df = assign_signals_improved(df, race_key)
     df = recalc_ability_score(df, race_key)  
@@ -389,7 +368,7 @@ def run_pipeline():
     race_list = (
         df.groupby(list_group_cols)
           .agg(
-              top_horse   =("win_ev", lambda x: df.loc[x.idxmax(), "馬名"] if "馬名" in df.columns else ""),
+              top_horse    =("win_ev", lambda x: df.loc[x.idxmax(), "馬名"] if "馬名" in df.columns else ""),
               top_signal  =("win_ev", lambda x: df.loc[x.idxmax(), "signal"] if "signal" in df.columns else ""),
               top_win_prob=("win_prob", "max"),
               top_top3prob=("top3_prob", "max"),
@@ -409,7 +388,7 @@ def run_pipeline():
         if os.path.exists(f):
             shutil.copy(f, os.path.join(ui_data_dir, os.path.basename(f)))
 
-    print(f"✅ 推論完了: すべてのバグを解消し、UIへの自動転送も完了しました！")
+    print(f"✅ 推論完了: オッズ完全排除・地方馬ペナルティを適用してUIへ転送しました！")
 
 if __name__ == "__main__":
     run_pipeline()
