@@ -3,7 +3,7 @@
  * ui/src/PastResults.jsx として保存する
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 
 // ============================================================
 // 🌟公開データ ＋ ローカルデータ 統合ストレージ
@@ -109,9 +109,6 @@ function monthLabel(ym) {
   return `${parseInt(ym.split("-")[1])}月`;
 }
 
-// ============================================================
-// 🌟 確率計算ロジック（UI表示用）
-// ============================================================
 function calcUmarenProb(p1_100, p2_100) {
   const p1 = (p1_100 || 0) / 100, p2 = (p2_100 || 0) / 100;
   const eps = 1e-9;
@@ -235,7 +232,7 @@ function AmountInput({ label, value, onChange }) {
   );
 }
 
-// 🌟 的中履歴ポップアップ（レースごとにグループ化＆確率表示版）
+// 🌟 的中履歴ポップアップ（レース順ソート修正版）
 function HitHistoryModal({ stats, onClose }) {
   const hits = [...stats.tsList, ...stats.umList, ...stats.wdList];
   
@@ -248,10 +245,24 @@ function HitHistoryModal({ stats, onClose }) {
      grouped[key].totalRet += h.ret;
   });
   
-  // 日付の降順、同じ日付なら合計配当額の降順でソート
-  const groupedArray = Object.values(grouped).sort((a,b) => {
-     if (a.rawDate !== b.rawDate) return b.rawDate.localeCompare(a.rawDate);
-     return b.totalRet - a.totalRet;
+  // 🌟修正：日付(降順) ＞ 競馬場(昇順) ＞ レース番号(昇順) で並び替え
+  const groupedArray = Object.values(grouped).sort((a, b) => {
+     if (a.rawDate !== b.rawDate) return b.rawDate.localeCompare(a.rawDate); // 日付が違えば新しい順
+     
+     // 「東京12R」のような文字列から競馬場と番号を抽出
+     const matchA = a.race.match(/([^\d]+)(\d+)/);
+     const matchB = b.race.match(/([^\d]+)(\d+)/);
+     
+     const venueA = matchA ? matchA[1].trim() : a.race;
+     const venueB = matchB ? matchB[1].trim() : b.race;
+     const numA = matchA ? parseInt(matchA[2], 10) : 0;
+     const numB = matchB ? parseInt(matchB[2], 10) : 0;
+
+     // 競馬場が違う場合はあいうえお順（京都 -> 東京）
+     if (venueA !== venueB) return venueA.localeCompare(venueB, 'ja');
+     
+     // 競馬場が同じ場合はレース番号順（1R -> 12R）
+     return numA - numB;
   });
 
   return (
@@ -265,12 +276,10 @@ function HitHistoryModal({ stats, onClose }) {
            {groupedArray.length === 0 ? <div style={{textAlign:"center", color:"#64748B", padding:24, fontSize:13}}>的中履歴がありません</div> :
               groupedArray.map((g, i) => (
                 <div key={i} style={{background:"#1E293B", borderRadius:10, marginBottom:12, border:"1px solid #334155", overflow:"hidden"}}>
-                   {/* レース単位のヘッダー */}
                    <div style={{background:"#334155", padding:"8px 14px", display:"flex", justifyContent:"space-between", alignItems:"center"}}>
                       <span style={{color:"#F1F5F9", fontSize:13, fontWeight:"bold"}}>{g.date} - {g.race}</span>
                       <span style={{color:"#F59E0B", fontSize:12, fontWeight:"bold"}}>計 {g.totalRet} 円</span>
                    </div>
-                   {/* 当たった券種ごとのリスト */}
                    <div style={{padding:"4px 14px"}}>
                      {g.items.map((h, j) => (
                        <div key={j} style={{display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom: j!==g.items.length-1 ? "1px solid rgba(255,255,255,0.05)" : "none"}}>
@@ -485,7 +494,7 @@ function DayResultView({ dateStr, raceList, onEdit, onBack }) {
   useEffect(() => { loadDay(dateStr).then(d => { setDayData(d); }); }, [dateStr]);
   const races = dayData?.races ?? [];
   races.forEach(r => r.dateStr = dateStr);
-  const simStats = calcSimStats(races);
+  const simStats = useMemo(() => calcSimStats(races), [races]);
 
   return (
     <div style={{background:"#0F172A",minHeight:"100vh"}}>
