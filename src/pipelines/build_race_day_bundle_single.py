@@ -141,7 +141,6 @@ def normalize_top3_prob(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
         df.loc[grp_idx, "top3_prob"] = df.loc[grp_idx, "top3_prob"].clip(0.0, 1.0)
     return df
 
-# 🌟修正2：印は完全に「確率順」で打ち、ペナルティ馬は最高で△（かつ最大3つまで）にする
 def assign_signals_improved(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
     df = df.copy()
     df["signal"] = "様子見"
@@ -153,10 +152,8 @@ def assign_signals_improved(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFra
         grp = df.loc[grp_idx]
         if len(grp) == 0: continue
 
-        # 完全な確率順（3着内率の高さで並べ、同点なら勝率で並べる）
         sorted_idx = grp.sort_values(by=["top3_prob", "win_prob"], ascending=[False, False]).index
         
-        # 使える印の在庫（合計6個）
         upper_marks = [
             ("軸", "◎", "honmei", "最有力"),
             ("対抗", "○", "taikou", "対抗"),
@@ -173,11 +170,9 @@ def assign_signals_improved(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFra
             is_penalized = (row.get("is_new", 0) == 1) or (row.get("is_first_dirt", 0) == 1) or (row.get("is_first_turf", 0) == 1)
             
             if is_penalized:
-                # ペナルティ馬は△の在庫からしか印をもらえない
                 if len(renka_marks) > 0:
                     df.loc[idx, ["signal","印","mark","recommendation"]] = renka_marks.pop(0)
             else:
-                # 通常の馬は上の印から順にもらっていく
                 if len(upper_marks) > 0:
                     df.loc[idx, ["signal","印","mark","recommendation"]] = upper_marks.pop(0)
                 elif len(renka_marks) > 0:
@@ -277,7 +272,6 @@ def run_pipeline():
 
     feat_records = []
     
-    # 馬場状態検知用の安全なカラム
     safe_track_cols = ["距離", "distance", "馬場", "馬場状態", "track_cond", "コース", "トラック", "種別", "条件"]
 
     for idx, row in df.iterrows():
@@ -301,7 +295,6 @@ def run_pipeline():
         feat.update(build_multi_race_feats(past)); feat.update(build_course_feats(past, v, d))
         feat["rest_days"] = calc_rest_days(past, today_str)
         
-        # 🌟修正1：馬場状態の安全な検知（「ダリア賞」などの誤爆を防止）
         cur_track_str = "".join([str(row.get(c, "")) for c in safe_track_cols])
         cur_is_dirt = "ダ" in cur_track_str or "ダート" in cur_track_str
         cur_is_turf = "芝" in cur_track_str
@@ -339,7 +332,6 @@ def run_pipeline():
     feat_df = pd.DataFrame(feat_records).set_index("_idx")
     feat_df["_rg"] = race_key.values
     
-    # 判定フラグをメインDataFrameに渡す
     df["is_new"] = feat_df["is_new"]
     df["is_first_dirt"] = feat_df["is_first_dirt"]
     df["is_first_turf"] = feat_df["is_first_turf"]
@@ -360,14 +352,14 @@ def run_pipeline():
     df["top3_prob"] = np.maximum(model_top3.predict(X), df["raw_win_prob"])
     df["win_odds"] = safe_num(df.get("単勝オッズ", df.get("win_odds", 10.0)), 10.0)
 
-    # 🌟ペナルティ処理（ラベル付けと確率半減）
     mask_new = df["is_new"] == 1
     mask_first_dirt = df["is_first_dirt"] == 1
     mask_first_turf = df["is_first_turf"] == 1
 
+    # 🌟 表示ラベルを「(新馬or初芝ダ)」に変更
     df.loc[mask_new, "raw_win_prob"] *= 0.5 
     df.loc[mask_new, "top3_prob"] *= 0.5
-    df.loc[mask_new, "馬名"] = df.loc[mask_new, "馬名"].astype(str) + " (新馬)"
+    df.loc[mask_new, "馬名"] = df.loc[mask_new, "馬名"].astype(str) + " (新馬or初芝ダ)"
 
     df.loc[mask_first_dirt, "raw_win_prob"] *= 0.5 
     df.loc[mask_first_dirt, "top3_prob"] *= 0.5
@@ -431,7 +423,7 @@ def run_pipeline():
     for f in [OUT_DETAIL, OUT_LIST]:
         if os.path.exists(f): shutil.copy(f, os.path.join(ui_data_dir, os.path.basename(f)))
 
-    print(f"✅ 推論完了: (初ダ)(初芝)の厳密検知と、完全確率順のペナルティ印ロジックを適用しました！")
+    print(f"✅ 推論完了: (新馬)ラベルを(新馬or初芝ダ)に変更しました！")
 
 if __name__ == "__main__":
     run_pipeline()
