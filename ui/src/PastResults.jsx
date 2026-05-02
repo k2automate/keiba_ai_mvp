@@ -54,7 +54,7 @@ function monthLabel(ym) {
   return `${parseInt(ym.split("-")[1])}月`;
 }
 
-// 🌟シミュレーション計算ロジック（ランク別・ワイド3点対応）
+// 🌟シミュレーション計算ロジック（ワイドの当たり目判定を正確に）
 function initStats() {
   return { validRaces:0, tsHit:0, tsBet:0, tsRet:0, umHit:0, umBet:0, umRet:0, wdHit:0, wdBet:0, wdRet:0 };
 }
@@ -63,13 +63,6 @@ function updateStats(st, r) {
   st.validRaces++;
   const p_ts = Number(r.payouts?.tansho || 0);
   const p_um = Number(r.payouts?.umaren || 0);
-  
-  // ワイドは入力された配当の平均額を適用
-  const w1 = Number(r.payouts?.wide1 || 0);
-  const w2 = Number(r.payouts?.wide2 || 0);
-  const w3 = Number(r.payouts?.wide3 || 0);
-  const w_arr = [w1, w2, w3].filter(v => v > 0);
-  const p_wd = w_arr.length > 0 ? Math.round(w_arr.reduce((a,b)=>a+b, 0) / w_arr.length) : 0;
 
   const fallback = h => h.mark==="◎"?100:h.mark==="○"?90:h.mark==="▲"?80:h.mark==="△"?70:0;
   const winS = [...r.horses].sort((a,b)=>(b.win_prob||fallback(b)) - (a.win_prob||fallback(a)));
@@ -82,9 +75,27 @@ function updateStats(st, r) {
   const u1=winS[0], u2=winS[1];
   if (u1?.rank>0 && u2?.rank>0 && u1.rank<=2 && u2.rank<=2) { st.umHit++; st.umRet += p_um; }
 
+  // ワイドの判定（AI推奨馬が実際のどの当たりペアに該当するかで配当を選ぶ）
   st.wdBet += 100;
   const w1h=t3S[0], w2h=t3S[1];
-  if (w1h?.rank>0 && w2h?.rank>0 && w1h.rank<=3 && w2h.rank<=3) { st.wdHit++; st.wdRet += p_wd; }
+  if (w1h?.rank>0 && w2h?.rank>0 && w1h.rank<=3 && w2h.rank<=3) { 
+    st.wdHit++;
+    
+    const hitPair = [w1h.no, w2h.no].sort((a,b)=>a-b).join("-");
+    const ranked = [...r.horses].filter(h=>h.rank>0).sort((a,b)=>a.rank-b.rank);
+    const r1 = ranked[0], r2 = ranked[1], r3 = ranked[2];
+    
+    const pair12 = r1&&r2 ? [r1.no, r2.no].sort((a,b)=>a-b).join("-") : "";
+    const pair13 = r1&&r3 ? [r1.no, r3.no].sort((a,b)=>a-b).join("-") : "";
+    const pair23 = r2&&r3 ? [r2.no, r3.no].sort((a,b)=>a-b).join("-") : "";
+    
+    let p_wd = 0;
+    if (hitPair === pair12) p_wd = Number(r.payouts?.wide1 || 0);
+    else if (hitPair === pair13) p_wd = Number(r.payouts?.wide2 || 0);
+    else if (hitPair === pair23) p_wd = Number(r.payouts?.wide3 || 0);
+    
+    st.wdRet += p_wd; 
+  }
 }
 
 function calcSimStats(races) {
@@ -129,7 +140,7 @@ function RankInput({ value, onChange }) {
 function AmountInput({ label, value, onChange }) {
   return (
     <div style={{display:"flex", alignItems:"center", gap:6}}>
-      <span style={{color:"#94A3B8", fontSize:11, width:40, flexShrink:0, textAlign:"right"}}>{label}</span>
+      <span style={{color:"#94A3B8", fontSize:11, width:64, flexShrink:0, textAlign:"right"}}>{label}</span>
       <input type="number" value={value} onChange={e=>onChange(e.target.value)} placeholder="0"
         style={{flex:1, height:30, borderRadius:6, border:"1px solid #334155", background:"#1E293B", 
         color:"#FFF", fontSize:13, padding:"0 8px", outline:"none"}} />
@@ -137,7 +148,6 @@ function AmountInput({ label, value, onChange }) {
   );
 }
 
-// 🌟マトリクス表の1行
 function RankTableRow({ label, st, isTotal=false }) {
   if (!st || st.validRaces === 0) return null;
   const tsH = st.tsBet > 0 ? Math.round((st.tsHit/(st.tsBet/100))*100) : 0;
@@ -231,6 +241,13 @@ function EntryModal({ date, raceData, existing, onSave, onClose }) {
 
   const cur = races[activeRace];
 
+  // 着順からワイドの組み合わせを自動計算
+  const ranked = cur ? [...cur.horses].filter(h=>h.rank>0).sort((a,b)=>a.rank-b.rank) : [];
+  const r1 = ranked[0], r2 = ranked[1], r3 = ranked[2];
+  const w12 = r1&&r2 ? `${r1.no}-${r2.no}` : "1着-2着";
+  const w13 = r1&&r3 ? `${r1.no}-${r3.no}` : "1着-3着";
+  const w23 = r2&&r3 ? `${r2.no}-${r3.no}` : "2着-3着";
+
   return (
     <div style={{position:"fixed",inset:0,zIndex:200,background:"rgba(0,0,0,.7)",
       display:"flex",flexDirection:"column",justifyContent:"flex-end"}}>
@@ -286,13 +303,13 @@ function EntryModal({ date, raceData, existing, onSave, onClose }) {
                 <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
                   <AmountInput label="単勝" value={cur.payouts?.tansho||""} onChange={v=>updatePayout(activeRace, "tansho", v)} />
                   <AmountInput label="馬連" value={cur.payouts?.umaren||""} onChange={v=>updatePayout(activeRace, "umaren", v)} />
-                  <AmountInput label="ﾜｲﾄﾞ①" value={cur.payouts?.wide1||""} onChange={v=>updatePayout(activeRace, "wide1", v)} />
-                  <AmountInput label="ﾜｲﾄﾞ②" value={cur.payouts?.wide2||""} onChange={v=>updatePayout(activeRace, "wide2", v)} />
-                  <AmountInput label="ﾜｲﾄﾞ③" value={cur.payouts?.wide3||""} onChange={v=>updatePayout(activeRace, "wide3", v)} />
-                  <AmountInput label="3連複" value={cur.payouts?.sanrenpuku||""} onChange={v=>updatePayout(activeRace, "sanrenpuku", v)} />
+                  <AmountInput label={`ﾜｲﾄﾞ ${w12}`} value={cur.payouts?.wide1||""} onChange={v=>updatePayout(activeRace, "wide1", v)} />
+                  <AmountInput label={`ﾜｲﾄﾞ ${w13}`} value={cur.payouts?.wide2||""} onChange={v=>updatePayout(activeRace, "wide2", v)} />
                   <div style={{gridColumn:"span 2"}}>
-                    <AmountInput label="3連単" value={cur.payouts?.sanrentan||""} onChange={v=>updatePayout(activeRace, "sanrentan", v)} />
+                     <AmountInput label={`ﾜｲﾄﾞ ${w23}`} value={cur.payouts?.wide3||""} onChange={v=>updatePayout(activeRace, "wide3", v)} />
                   </div>
+                  <AmountInput label="3連複" value={cur.payouts?.sanrenpuku||""} onChange={v=>updatePayout(activeRace, "sanrenpuku", v)} />
+                  <AmountInput label="3連単" value={cur.payouts?.sanrentan||""} onChange={v=>updatePayout(activeRace, "sanrentan", v)} />
                 </div>
               </div>
             </div>

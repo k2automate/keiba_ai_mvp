@@ -141,6 +141,7 @@ def normalize_top3_prob(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
         df.loc[grp_idx, "top3_prob"] = df.loc[grp_idx, "top3_prob"].clip(0.0, 1.0)
     return df
 
+# 🌟修正1：印の打ち方を「◎は勝率+複勝率トップ」「他は純粋な複勝率順」に変更
 def assign_signals_improved(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
     df = df.copy()
     df["signal"] = "様子見"
@@ -154,18 +155,26 @@ def assign_signals_improved(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFra
 
         wp = grp["raw_win_prob"]
         tp = grp["top3_prob"]
-        sorted_idx = wp.sort_values(ascending=False).index
         
-        if len(sorted_idx) > 0: df.loc[sorted_idx[0], ["signal","印","mark","recommendation"]] = ["軸", "◎", "honmei", "最有力"]
-        if len(sorted_idx) > 1: df.loc[sorted_idx[1], ["signal","印","mark","recommendation"]] = ["対抗", "○", "taikou", "対抗"]
-        if len(sorted_idx) > 2:
-            remaining = sorted_idx[2:]
-            ana_idx = tp.loc[remaining].idxmax()
-            df.loc[ana_idx, ["signal","印","mark","recommendation"]] = ["単穴", "▲", "ana", "単穴"]
-            remaining2 = remaining.difference([ana_idx])
-            if len(remaining2) > 0:
-                renka_idx = tp.loc[remaining2].idxmax()
-                df.loc[renka_idx, ["signal","印","mark","recommendation"]] = ["連下", "△", "renka", "連下"]
+        # ◎（本命）は「勝率＋複勝率」の総合力が最も高い馬
+        combined_score = wp + tp
+        honmei_idx = combined_score.idxmax()
+        
+        # それ以外の馬は純粋に「複勝率」の高さだけで並べる
+        remaining = grp.index.difference([honmei_idx])
+        sorted_tp_idx = tp.loc[remaining].sort_values(ascending=False).index
+
+        df.loc[honmei_idx, ["signal","印","mark","recommendation"]] = ["軸", "◎", "honmei", "最有力"]
+        
+        if len(sorted_tp_idx) > 0:
+            df.loc[sorted_tp_idx[0], ["signal","印","mark","recommendation"]] = ["対抗", "○", "taikou", "対抗"]
+        if len(sorted_tp_idx) > 1:
+            df.loc[sorted_tp_idx[1], ["signal","印","mark","recommendation"]] = ["単穴", "▲", "ana", "単穴"]
+        if len(sorted_tp_idx) > 2:
+            df.loc[sorted_tp_idx[2], ["signal","印","mark","recommendation"]] = ["連下", "△", "renka", "連下"]
+        if len(sorted_tp_idx) > 3:
+            df.loc[sorted_tp_idx[3], ["signal","印","mark","recommendation"]] = ["連下", "△", "renka", "連下"]
+            
     return df
 
 def recalc_ability_score(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
@@ -178,11 +187,9 @@ def recalc_ability_score(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
         n = len(grp)
         if n == 0: continue
 
-        # 🌟 修正1：勝率と複勝率をミックスさせて、複勝率が高い馬の指数が底辺にならないようにする
         wp_raw = grp["raw_win_prob"].clip(lower=1e-6)
         tp_raw = grp["top3_prob"].clip(lower=1e-6)
         
-        # 勝率70% + 複勝率30% のハイブリッドスコア
         hybrid_score = (wp_raw * 0.7) + (tp_raw * 0.3)
         log_raw = np.log1p(hybrid_score * 100)
 
@@ -291,7 +298,6 @@ def run_pipeline():
     feat_df = pd.DataFrame(feat_records).set_index("_idx")
     feat_df["_rg"] = race_key.values
     
-    # オッズ完全フラット化（カンニング防止）
     if "log_odds" in feat_df.columns: feat_df["log_odds"] = float(np.log(10.0))
     if "market_prob" in feat_df.columns: feat_df["market_prob"] = 0.1
     if "odds_rank" in feat_df.columns: feat_df["odds_rank"] = 8.0
@@ -302,16 +308,17 @@ def run_pipeline():
     X = feat_df.reindex(columns=required_feats, fill_value=0)
     
     df["raw_win_prob"] = model_win.predict(X)
-    df["top3_prob"] = model_top3.predict(X)
+    
+    # 🌟修正2：AIの予測ブレを防ぎ、複勝率が必ず勝率以上になるように補正
+    df["top3_prob"] = np.maximum(model_top3.predict(X), df["raw_win_prob"])
+    
     df["win_odds"] = safe_num(df.get("単勝オッズ", df.get("win_odds", 10.0)), 10.0)
 
-    # 🌟修正2：新馬（過去データ0件）の過大評価ペナルティ＆UI表示名変更
     is_new_mask = [horse_past.get(str(h), pd.DataFrame()).empty for h in df.get("馬名", pd.Series([""]*len(df)))]
-    df.loc[is_new_mask, "raw_win_prob"] *= 0.6 # 40%カット
+    df.loc[is_new_mask, "raw_win_prob"] *= 0.6 
     df.loc[is_new_mask, "top3_prob"] *= 0.6
     df.loc[is_new_mask, "馬名"] = df.loc[is_new_mask, "馬名"].astype(str) + " (新馬)"
 
-    # 地方馬ペナルティ
     is_local = df.get("馬名", df.get("horse_name", pd.Series([""]*len(df), index=df.index))).astype(str).str.contains(r"\(地\)|（地）")
     df.loc[is_local, "raw_win_prob"] *= 0.5
     df.loc[is_local, "top3_prob"] *= 0.5
@@ -358,7 +365,7 @@ def run_pipeline():
     for f in [OUT_DETAIL, OUT_LIST]:
         if os.path.exists(f): shutil.copy(f, os.path.join(ui_data_dir, os.path.basename(f)))
 
-    print(f"✅ 推論完了: AIスコア調整、新馬ペナルティの適用とUIへの転送が完了しました！")
+    print(f"✅ 推論完了: 確率の逆転防止と印の改善が完了しました！")
 
 if __name__ == "__main__":
     run_pipeline()
