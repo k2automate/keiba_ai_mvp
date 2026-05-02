@@ -141,6 +141,7 @@ def normalize_top3_prob(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
         df.loc[grp_idx, "top3_prob"] = df.loc[grp_idx, "top3_prob"].clip(0.0, 1.0)
     return df
 
+# 🌟修正2：印は完全に「確率順」で打ち、ペナルティ馬は最高で△（かつ最大3つまで）にする
 def assign_signals_improved(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
     df = df.copy()
     df["signal"] = "様子見"
@@ -152,26 +153,35 @@ def assign_signals_improved(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFra
         grp = df.loc[grp_idx]
         if len(grp) == 0: continue
 
+        # 完全な確率順（3着内率の高さで並べ、同点なら勝率で並べる）
         sorted_idx = grp.sort_values(by=["top3_prob", "win_prob"], ascending=[False, False]).index
         
-        marks = [
+        # 使える印の在庫（合計6個）
+        upper_marks = [
             ("軸", "◎", "honmei", "最有力"),
             ("対抗", "○", "taikou", "対抗"),
-            ("単穴", "▲", "ana", "単穴"),
+            ("単穴", "▲", "ana", "単穴")
+        ]
+        renka_marks = [
+            ("連下", "△", "renka", "連下"),
+            ("連下", "△", "renka", "連下"),
             ("連下", "△", "renka", "連下")
         ]
-        mark_idx = 0
         
         for idx in sorted_idx:
             row = df.loc[idx]
             is_penalized = (row.get("is_new", 0) == 1) or (row.get("is_first_dirt", 0) == 1) or (row.get("is_first_turf", 0) == 1)
             
             if is_penalized:
-                df.loc[idx, ["signal","印","mark","recommendation"]] = ["連下", "△", "renka", "連下"]
+                # ペナルティ馬は△の在庫からしか印をもらえない
+                if len(renka_marks) > 0:
+                    df.loc[idx, ["signal","印","mark","recommendation"]] = renka_marks.pop(0)
             else:
-                if mark_idx < len(marks):
-                    df.loc[idx, ["signal","印","mark","recommendation"]] = marks[mark_idx]
-                    mark_idx += 1
+                # 通常の馬は上の印から順にもらっていく
+                if len(upper_marks) > 0:
+                    df.loc[idx, ["signal","印","mark","recommendation"]] = upper_marks.pop(0)
+                elif len(renka_marks) > 0:
+                    df.loc[idx, ["signal","印","mark","recommendation"]] = renka_marks.pop(0)
             
     return df
 
@@ -186,10 +196,14 @@ def recalc_ability_score(df: pd.DataFrame, race_key: pd.Series) -> pd.DataFrame:
         if n == 0: continue
 
         wp_raw = grp["raw_win_prob"].clip(lower=1e-6)
-        tp_raw = grp["top3_prob"].clip(lower=1e-6)
-        
-        hybrid_score = (wp_raw * 0.7) + (tp_raw * 0.3)
-        log_raw = np.log1p(hybrid_score * 100)
+        odds = safe_num(grp["win_odds"], 10.0).clip(lower=1.1)
+        mkt = (1.0 / odds) / (1.0 / odds).sum()
+
+        alpha = (wp_raw / mkt).clip(lower=0.1, upper=10.0)
+        capped_odds = odds.clip(upper=10.0)
+
+        raw_score = wp_raw * capped_odds * np.sqrt(alpha)
+        log_raw = np.log1p(raw_score)
 
         s_min, s_max = log_raw.min(), log_raw.max()
         if s_max > s_min + 1e-6:
@@ -263,6 +277,9 @@ def run_pipeline():
 
     feat_records = []
     
+    # 馬場状態検知用の安全なカラム
+    safe_track_cols = ["距離", "distance", "馬場", "馬場状態", "track_cond", "コース", "トラック", "種別", "条件"]
+
     for idx, row in df.iterrows():
         h, v = str(row.get("馬名", "")), str(row.get("開催", ""))
         d = scalar_safe(row.get("距離", 1600), 1600.0)
@@ -284,18 +301,19 @@ def run_pipeline():
         feat.update(build_multi_race_feats(past)); feat.update(build_course_feats(past, v, d))
         feat["rest_days"] = calc_rest_days(past, today_str)
         
-        cur_track_str = str(row.get("距離", "")) + str(row.get("馬場状態", "")) + str(row.get("レース名", "")) + str(row.get("コース", ""))
+        # 🌟修正1：馬場状態の安全な検知（「ダリア賞」などの誤爆を防止）
+        cur_track_str = "".join([str(row.get(c, "")) for c in safe_track_cols])
         cur_is_dirt = "ダ" in cur_track_str or "ダート" in cur_track_str
         cur_is_turf = "芝" in cur_track_str
         
-        past_str = ""
+        past_track_str = ""
         if not past.empty:
-            past_cols = [c for c in ["距離", "馬場状態", "レース名", "コース"] if c in past.columns]
-            if past_cols:
-                past_str = past[past_cols].astype(str).agg(''.join, axis=1).str.cat()
+            past_safe_cols = [c for c in safe_track_cols if c in past.columns]
+            if past_safe_cols:
+                past_track_str = past[past_safe_cols].astype(str).agg(''.join, axis=1).str.cat()
         
-        past_has_dirt = "ダ" in past_str or "ダート" in past_str
-        past_has_turf = "芝" in past_str
+        past_has_dirt = "ダ" in past_track_str or "ダート" in past_track_str
+        past_has_turf = "芝" in past_track_str
         
         feat["is_new"] = int(past.empty)
         feat["is_first_dirt"] = int(not past.empty and cur_is_dirt and not past_has_dirt)
@@ -321,9 +339,10 @@ def run_pipeline():
     feat_df = pd.DataFrame(feat_records).set_index("_idx")
     feat_df["_rg"] = race_key.values
     
-    df["is_new"] = feat_df["is_new"].values
-    df["is_first_dirt"] = feat_df["is_first_dirt"].values
-    df["is_first_turf"] = feat_df["is_first_turf"].values
+    # 判定フラグをメインDataFrameに渡す
+    df["is_new"] = feat_df["is_new"]
+    df["is_first_dirt"] = feat_df["is_first_dirt"]
+    df["is_first_turf"] = feat_df["is_first_turf"]
 
     df_for_mprob = pd.DataFrame({"log_odds": feat_df["log_odds"], "_rg": feat_df["_rg"]})
     for rg, grp in df_for_mprob.groupby("_rg"):
@@ -341,11 +360,11 @@ def run_pipeline():
     df["top3_prob"] = np.maximum(model_top3.predict(X), df["raw_win_prob"])
     df["win_odds"] = safe_num(df.get("単勝オッズ", df.get("win_odds", 10.0)), 10.0)
 
+    # 🌟ペナルティ処理（ラベル付けと確率半減）
     mask_new = df["is_new"] == 1
     mask_first_dirt = df["is_first_dirt"] == 1
     mask_first_turf = df["is_first_turf"] == 1
 
-    # 🌟 表示ラベルの微調整
     df.loc[mask_new, "raw_win_prob"] *= 0.5 
     df.loc[mask_new, "top3_prob"] *= 0.5
     df.loc[mask_new, "馬名"] = df.loc[mask_new, "馬名"].astype(str) + " (新馬)"
@@ -412,7 +431,7 @@ def run_pipeline():
     for f in [OUT_DETAIL, OUT_LIST]:
         if os.path.exists(f): shutil.copy(f, os.path.join(ui_data_dir, os.path.basename(f)))
 
-    print(f"✅ 推論完了: (初ダ)(初芝)のラベル修正とペナルティ適用が完了しました！")
+    print(f"✅ 推論完了: (初ダ)(初芝)の厳密検知と、完全確率順のペナルティ印ロジックを適用しました！")
 
 if __name__ == "__main__":
     run_pipeline()
